@@ -11,7 +11,7 @@ import unittest
 import tempfile
 
 import opentimelineio as otio
-from opentimelineio_contrib.adapters.aaf_adapter.aaf_writer import (
+from otio_aaf_adapter.adapters.aaf_adapter.aaf_writer import (
     AAFAdapterError,
     AAFValidationError
 )
@@ -1894,7 +1894,7 @@ class SimplifyTests(unittest.TestCase):
         tl.tracks[0][0].append(otio.schema.Track())
         tl.tracks[0][0][0].append(otio.schema.Clip())
 
-        from opentimelineio_contrib.adapters import advanced_authoring_format
+        from otio_aaf_adapter.adapters import advanced_authoring_format
         simple_tl = advanced_authoring_format._simplify(tl)
 
         self.assertEqual(
@@ -1908,7 +1908,7 @@ class SimplifyTests(unittest.TestCase):
         tl.tracks[0][0][0].append(otio.schema.Track())
         tl.tracks[0][0][0][0].append(otio.schema.Clip())
 
-        from opentimelineio_contrib.adapters import advanced_authoring_format
+        from otio_aaf_adapter.adapters import advanced_authoring_format
         simple_tl = advanced_authoring_format._simplify(tl)
 
         # top level thing should not be a clip
@@ -1926,7 +1926,7 @@ class SimplifyTests(unittest.TestCase):
         tl.tracks[0][0].append(otio.schema.Clip())
         tl.tracks[0][0].append(otio.schema.Clip())
 
-        from opentimelineio_contrib.adapters import advanced_authoring_format
+        from otio_aaf_adapter.adapters import advanced_authoring_format
         simple_tl = advanced_authoring_format._simplify(tl)
 
         self.assertNotEqual(
@@ -1945,7 +1945,7 @@ class SimplifyTests(unittest.TestCase):
         tl.tracks[0][0].append(otio.schema.Track())
         tl.tracks[0][0][1].append(otio.schema.Clip())
 
-        from opentimelineio_contrib.adapters import advanced_authoring_format
+        from otio_aaf_adapter.adapters import advanced_authoring_format
         simple_tl = advanced_authoring_format._simplify(tl)
 
         # None of the things in the top level stack should be a clip

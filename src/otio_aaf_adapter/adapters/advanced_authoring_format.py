@@ -37,7 +37,7 @@ import aaf2.mobs  # noqa: E402
 import aaf2.components  # noqa: E402
 import aaf2.core  # noqa: E402
 import aaf2.misc  # noqa: E402
-from opentimelineio_contrib.adapters.aaf_adapter import aaf_writer  # noqa: E402
+from otio_aaf_adapter.adapters.aaf_adapter import aaf_writer  # noqa: E402
 
 
 debug = False
