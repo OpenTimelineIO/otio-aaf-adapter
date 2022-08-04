@@ -84,7 +84,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install pytest pytest-cov wheel -V pyaaf2==1.4.0
-        pip install git+https://github.com/markreidvfx/OpenTimelineIO@remove_aaf_adapter_v1
+        pip install git+https://github.com/AcademySoftwareFoundation/OpenTimelineIO.git@refs/pull/1348/head
         # pip install pytest pytest-cov -V pyaaf2==1.4.0 -V OpenTimelineIO==0.14.1
 
     - name: Run Unit Tests
