@@ -3,6 +3,7 @@ name: Run tests
 env:
   GH_COV_PY: 3.7
   GH_COV_OS: ubuntu-latest
+  GH_DEPENDABOT: dependabot
 
 on:
   push:
@@ -98,7 +99,7 @@ jobs:
         pytest -v tests
 
     - name: Upload coverage to Codecov
-      if: matrix.python-version == env.GH_COV_PY && matrix.os == env.GH_COV_OS
+      if: matrix.python-version == env.GH_COV_PY && matrix.os == env.GH_COV_OS && github.actor != env.GH_DEPENDABOT
       uses: codecov/codecov-action@v3
       with:
         flags: unittests
