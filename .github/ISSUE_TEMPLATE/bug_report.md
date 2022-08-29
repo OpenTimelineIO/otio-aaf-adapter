@@ -27,11 +27,6 @@ Describe the issue here.
 2. Python version
 3. Example snippet that demonstrates the issue - if it's a build issue,
 4. OpenTimelineIO release version or commit hash
-5. Compiler information:
-    on Mac, type `clang -v`, and paste the results here
-    on Linux, type `gcc -v`, and paste the results here
-    on Windows, type `cl`, and paste the results here.
-    If you are unable to determine your compiler via these commands, please indicate that here.
 
 ## Expected Behavior
 
@@ -43,7 +38,7 @@ If applicable, add screenshots to help explain your problem.
 
 ## Logs
 
-If applicable, attach a conplete console log, that show a reproduction of the problem entirely.
+If applicable, attach a complete console log, that show a reproduction of the problem entirely.
 
 ## Additional Context
 

@@ -2,7 +2,7 @@
 
 Each PR should link at least one issue, in the form:
 
-```Fixes #123```
+Fixes #123
 
 Use one line for each Issue. This allows auto-closing the related issue when the fix is merged.
 
