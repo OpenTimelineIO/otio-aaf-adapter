@@ -1,18 +1,15 @@
-OpenTimelineIO Advanced Authoring Format (AAF) Adapter
-=====================================
+# OpenTimelineIO Advanced Authoring Format (AAF) Adapter
 
 [![Supported VFX Platform Versions](https://img.shields.io/badge/vfx%20platform-2018--2021-lightgrey.svg)](http://www.vfxplatform.com/)
 ![Supported Versions](https://img.shields.io/badge/python-2.7%2C%203.7%2C%203.8%2C%203.9%2C%203.10-blue)
 [![Run tests](https://github.com/markreidvfx/otio-aaf-adapter/actions/workflows/ci.yaml/badge.svg)](https://github.com/OpenTimelineIO/otio-aaf-adapter/actions/workflows/ci.yaml)
 
-Overview
---------
+## Overview
 
 This project is a [OpenTimelineIO](https://github.com/AcademySoftwareFoundation/OpenTimelineIO) adapter for reading and writing Advanced Authoring Format (AAF) files.
 This adapter was originally included with OpenTimelineIO as a contrib adapter. It is in the process of being separated into this project to improve maintainability and reduced the dependencies of both projects.
 
-Feature Matrix
---------------
+## Feature Matrix
 
 | Feature                  | Read  | Write |
 | -------                  | ----  | ----- |
@@ -29,20 +26,17 @@ Feature Matrix
 | Color Decision List      |  ✖   |   ✖   |
 | Image Sequence Reference |  ✖   |   ✖   |
 
-Requirements
-------------
+## Requirements
 
 * [OpenTimelineIO](https://github.com/AcademySoftwareFoundation/OpenTimelineIO) > 14.1 (latest git version currently recommended)
 * [pyaaf2](https://github.com/markreidvfx/pyaaf2) >= 1.4.0
 
 
-Licensing
----------
+## Licensing
 
 This repository is licensed under the [Apache License, Version 2.0](LICENSE.md).
 
-Testing for Development
------------------------
+## Testing for Development
 
 ```bash
 # In the root folder of the repo
@@ -54,8 +48,7 @@ otioconvert -i some_timeline.aaf -o some_timeline.ext
 
 If you are using a version of OpentimelineIO that still has the AAF contrib adapter you may need to add the path of [plugin_manifest.json](./src/otio_aaf_adapter/plugin_manifest.json) to your `OTIO_PLUGIN_MANIFEST_PATH` [environment variable.](https://opentimelineio.readthedocs.io/en/latest/tutorials/otio-env-variables.html) This should override the contrib version.
 
-Contributions
--------------
+## Contributions
 
 If you have any suggested changes to the otio-aaf-adapter,
 please provide them via [pull request](../../pulls) or [create an issue](../../issues) as appropriate.
