@@ -28,8 +28,8 @@ This adapter was originally included with OpenTimelineIO as a contrib adapter. I
 
 ## Requirements
 
-* [OpenTimelineIO](https://github.com/AcademySoftwareFoundation/OpenTimelineIO) > 14.1 (latest git version currently recommended)
-* [pyaaf2](https://github.com/markreidvfx/pyaaf2) >= 1.4.0
+* [OpenTimelineIO](https://github.com/AcademySoftwareFoundation/OpenTimelineIO)
+* [pyaaf2](https://github.com/markreidvfx/pyaaf2)
 
 
 ## Licensing
