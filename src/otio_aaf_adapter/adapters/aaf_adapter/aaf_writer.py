@@ -163,6 +163,13 @@ class AAFFileTranscriber:
             tape_timecode_slot.segment.length = int(timecode_length)
             self.aaf_file.content.mobs.append(tapemob)
             self._unique_tapemobs[mob_id] = tapemob
+
+            media = otio_clip.media_reference
+            if isinstance(media, otio.schema.ExternalReference) and media.target_url:
+                locator = self.aaf_file.create.NetworkLocator()
+                locator['URLString'].value = media.target_url
+                tapemob.descriptor["Locator"].append(locator)
+
         return tapemob
 
     def track_transcriber(self, otio_track):
@@ -426,6 +433,11 @@ class _TrackTranscriber:
     def _transition_parameters(self):
         pass
 
+    def aaf_network_locator(self, otio_external_ref):
+        locator = self.aaf_file.create.NetworkLocator()
+        locator['URLString'].value = otio_external_ref.target_url
+        return locator
+
     def aaf_filler(self, otio_gap):
         """Convert an otio Gap into an aaf Filler"""
         length = int(otio_gap.visible_range().duration.value)
@@ -671,6 +683,16 @@ class VideoTrackTranscriber(_TrackTranscriber):
         descriptor["VideoLineMap"].value = [42, 0]
         descriptor["SampleRate"].value = 24
         descriptor["Length"].value = 1
+
+        media = otio_clip.media_reference
+        if isinstance(media, otio.schema.ExternalReference):
+            if media.target_url:
+                locator = self.aaf_network_locator(media)
+                descriptor["Locator"].append(locator)
+            if media.available_range:
+                descriptor['SampleRate'].value = media.available_range.duration.rate
+                descriptor["Length"].value = int(media.available_range.duration.value)
+
         return descriptor
 
     def _transition_parameters(self):
@@ -795,6 +817,11 @@ class AudioTrackTranscriber(_TrackTranscriber):
         descriptor["Length"].value = int(
             otio_clip.media_reference.available_range.duration.value
         )
+
+        if isinstance(otio_clip.media_reference, otio.schema.ExternalReference):
+            locator = self.aaf_network_locator(otio_clip.media_reference)
+            descriptor["Locator"].append(locator)
+
         return descriptor
 
     def _transition_parameters(self):
