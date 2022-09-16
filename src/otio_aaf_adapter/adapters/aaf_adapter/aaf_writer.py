@@ -58,6 +58,27 @@ def _is_considered_gap(thing):
     return False
 
 
+def _nearest_timecode(rate):
+    supported_rates = (24.0,
+                       25.0,
+                       30.0,
+                       60.0)
+    nearest_rate = 0.0
+    min_diff = float("inf")
+    for valid_rate in supported_rates:
+        if valid_rate == rate:
+            return rate
+
+        diff = abs(rate - valid_rate)
+        if diff >= min_diff:
+            continue
+
+        min_diff = diff
+        nearest_rate = valid_rate
+
+    return nearest_rate
+
+
 class AAFAdapterError(otio.exceptions.OTIOError):
     pass
 
@@ -154,6 +175,34 @@ class AAFFileTranscriber:
             raise otio.exceptions.NotSupportedError(
                 f"Unsupported track kind: {otio_track.kind}")
         return transcriber
+
+    def add_timecode(self, input_otio, default_edit_rate):
+        """
+        Add CompositionMob level timecode track base on global_start_time
+        if available, otherwise start is set to 0.
+        """
+        if input_otio.global_start_time:
+            edit_rate = input_otio.global_start_time.rate
+            start = int(input_otio.global_start_time.value)
+        else:
+            edit_rate = default_edit_rate
+            start = 0
+
+        slot = self.compositionmob.create_timeline_slot(edit_rate)
+        slot.name = "TC"
+
+        # indicated that this is the primary timecode track
+        slot['PhysicalTrackNumber'].value = 1
+
+        # timecode.start is in edit_rate units NOT timecode fps
+        # timecode.fps is only really a hint for a NLE displays on
+        # how to display the start frame index to the user.
+        # currently only selects basic non drop frame rates
+        timecode = self.aaf_file.create.Timecode()
+        timecode.fps = int(_nearest_timecode(edit_rate))
+        timecode.drop = False
+        timecode.start = start
+        slot.segment = timecode
 
     def _transcribe_user_comments(self, otio_item, target_mob):
         """Transcribes user comments on `otio_item` onto `target_mob` in AAF."""

@@ -1650,14 +1650,22 @@ def write_to_file(input_otio, filepath, **kwargs):
             raise otio.exceptions.NotSupportedError(
                 "Currently only supporting top level Timeline")
 
+        default_edit_rate = None
         for otio_track in timeline.tracks:
             # Ensure track must have clip to get the edit_rate
             if len(otio_track) == 0:
                 continue
 
             transcriber = otio2aaf.track_transcriber(otio_track)
+            if not default_edit_rate:
+                default_edit_rate = transcriber.edit_rate
 
             for otio_child in otio_track:
                 result = transcriber.transcribe(otio_child)
                 if result:
                     transcriber.sequence.components.append(result)
+
+        # Always add a timecode track to the main composition mob.
+        # This is required for compatibility with DaVinci Resolve.
+        if default_edit_rate or input_otio.global_start_time:
+            otio2aaf.add_timecode(input_otio, default_edit_rate)
