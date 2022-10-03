@@ -16,6 +16,9 @@ from otio_aaf_adapter.adapters.aaf_adapter.aaf_writer import (
     AAFValidationError
 )
 
+# module needs to be imported for code coverage to work
+import otio_aaf_adapter.adapters.advanced_authoring_format  # noqa: F401
+
 try:
     # python2
     import StringIO as io

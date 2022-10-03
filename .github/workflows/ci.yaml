@@ -1,5 +1,10 @@
 name: Run tests
 
+env:
+  GH_COV_PY: 3.7
+  GH_COV_OS: ubuntu-latest
+  GH_DEPENDABOT: dependabot
+
 on:
   push:
     branches: [main]
@@ -84,7 +89,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install pytest pytest-cov wheel -V pyaaf2==1.4.0
-        pip install git+https://github.com/markreidvfx/OpenTimelineIO@remove_aaf_adapter_v1
+        pip install git+https://github.com/AcademySoftwareFoundation/OpenTimelineIO.git@refs/pull/1348/head
         # pip install pytest pytest-cov -V pyaaf2==1.4.0 -V OpenTimelineIO==0.14.1
 
     - name: Run Unit Tests
@@ -92,6 +97,14 @@ jobs:
       run: |
         python -m pip install dist/*.whl --no-index
         pytest -v tests
+
+    - name: Upload coverage to Codecov
+      if: matrix.python-version == env.GH_COV_PY && matrix.os == env.GH_COV_OS && github.actor != env.GH_DEPENDABOT
+      uses: codecov/codecov-action@v3
+      with:
+        flags: unittests
+        name: otio-aaf-adapter-codecov
+        fail_ci_if_error: true
 
   latest-release:
     needs: test-otio-git
