@@ -24,7 +24,7 @@ jobs:
   build-wheel:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v3.1.0
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v4
@@ -72,7 +72,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v3.1.0
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
