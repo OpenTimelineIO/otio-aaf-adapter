@@ -286,12 +286,13 @@ def _gather_clip_mob_ids(input_otio,
     def _from_aaf_file(clip):
         """ Get the MobID from the AAF file itself."""
         mob_id = None
-        target_url = clip.media_reference.target_url
-        if os.path.isfile(target_url) and target_url.endswith("aaf"):
-            with aaf2.open(clip.media_reference.target_url) as aaf_file:
-                mastermobs = list(aaf_file.content.mastermobs())
-                if len(mastermobs) == 1:
-                    mob_id = mastermobs[0].mob_id
+        if isinstance(clip.media_reference, otio.schema.ExternalReference):
+            target_url = clip.media_reference.target_url
+            if os.path.isfile(target_url) and target_url.endswith("aaf"):
+                with aaf2.open(clip.media_reference.target_url) as aaf_file:
+                    mastermobs = list(aaf_file.content.mastermobs())
+                    if len(mastermobs) == 1:
+                        mob_id = mastermobs[0].mob_id
         return mob_id
 
     def _generate_empty_mobid(clip):
