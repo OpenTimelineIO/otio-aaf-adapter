@@ -546,6 +546,7 @@ class _TrackTranscriber:
     def aaf_sequence(self, otio_track):
         """Convert an otio Track into an aaf Sequence"""
         sequence = self.aaf_file.create.Sequence(media_kind=self.media_kind)
+        sequence.components.value = []
         length = 0
         for nested_otio_child in otio_track:
             result = self.transcribe(nested_otio_child)
@@ -668,6 +669,7 @@ class VideoTrackTranscriber(_TrackTranscriber):
         timeline_mobslot = self.compositionmob.create_timeline_slot(
             edit_rate=self.edit_rate)
         sequence = self.aaf_file.create.Sequence(media_kind=self.media_kind)
+        sequence.components.value = []
         timeline_mobslot.segment = sequence
         return timeline_mobslot, sequence
 
@@ -803,6 +805,7 @@ class AudioTrackTranscriber(_TrackTranscriber):
         timeline_mobslot.segment = opgroup
         # Sequence
         sequence = self.aaf_file.create.Sequence(media_kind=self.media_kind)
+        sequence.components.value = []
         sequence.length = total_length
         opgroup.segments.append(sequence)
         return timeline_mobslot, sequence
