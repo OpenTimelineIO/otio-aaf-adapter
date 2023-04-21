@@ -223,6 +223,8 @@ def _convert_rgb_to_marker_color(rgb_dict):
         (0.0, 0.0, 0.0): otio.schema.MarkerColor.BLACK,
         (1.0, 1.0, 1.0): otio.schema.MarkerColor.WHITE,
     }
+    if not rgb_dict:
+        return otio.schema.MarkerColor.RED
 
     # convert from UInt to float
     red = float(rgb_dict["red"]) / 65535.0
@@ -695,7 +697,7 @@ def _transcribe(item, parents, edit_rate, indent=0):
             )
             if color is None:
                 color = _convert_rgb_to_marker_color(
-                    metadata["CommentMarkerColor"]
+                    metadata.get("CommentMarkerColor")
                 )
             result.color = color
 
