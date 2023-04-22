@@ -1200,6 +1200,30 @@ def _fix_transitions(thing):
         for child in thing:
             _fix_transitions(child)
 
+def _find_child_at_time(target_track, start_time):
+    """same as child_at_time but passes through transitions"""
+
+    target_item = target_track.child_at_time(start_time)
+
+    if isinstance(target_item, otio.schema.Transition):
+        parent = target_item.parent()
+        index = parent.index(target_item)
+        before = parent[index-1]
+
+        start_local = target_track.transformed_time(
+            start_time, parent)
+
+        if before.range_in_parent().contains(start_local):
+            target_item = before
+        else:
+            target_item = parent[index+1]
+
+        if isinstance(target_item, otio.core.Composition):
+            start_local = parent.transformed_time(
+                start_time, target_item)
+            return _find_child_at_time(target_item, start_local)
+
+    return target_item
 
 def _attach_markers(collection):
     """Search for markers on tracks and attach them to their corresponding item.
@@ -1242,9 +1266,8 @@ def _attach_markers(collection):
 
                 # determine new item to attach the marker to
                 try:
-                    target_item = target_track.child_at_time(
-                        marker.marked_range.start_time
-                    )
+                    target_item = _find_child_at_time(
+                        target_track, marker.marked_range.start_time)
 
                     if target_item is None or not hasattr(target_item, 'markers'):
                         # Item found cannot have markers, for example Transition.
@@ -1573,6 +1596,12 @@ def read_from_file(
 
         result = _transcribe(mobs_to_transcribe, parents=list(), edit_rate=None)
 
+    # OTIO represents transitions a bit different than AAF, so
+    # we need to iterate over them and modify the items on either side.
+    # Note this needs to be done before attaching markers, marker
+    # positions are not stored with transition length offsets
+    _fix_transitions(result)
+
     # Attach marker to the appropriate clip, gap etc.
     if attach_markers:
         result = _attach_markers(result)
@@ -1583,11 +1612,6 @@ def read_from_file(
     if simplify:
         result = _simplify(result)
 
-    # OTIO represents transitions a bit different than AAF, so
-    # we need to iterate over them and modify the items on either side.
-    # Note that we do this *after* simplifying, since the structure
-    # may change during simplification.
-    _fix_transitions(result)
 
     # Reset transcribe_log debugging
     _TRANSCRIBE_DEBUG = False
