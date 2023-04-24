@@ -1425,16 +1425,16 @@ def _simplify(thing):
             # Keep the parent's length, if it has one
             if thing.source_range:
                 # make sure it has a source_range first
-                if not result.source_range:
-                    try:
+                try:
+                    if not result.source_range:
                         result.source_range = result.trimmed_range()
-                    except otio.exceptions.CannotComputeAvailableRangeError:
-                        result.source_range = copy.copy(thing.source_range)
-                # modify the duration, but leave the start_time as is
-                result.source_range = otio.opentime.TimeRange(
-                    result.source_range.start_time,
-                    thing.source_range.duration
-                )
+                    # modify the duration and combine start_times
+                    result.source_range = otio.opentime.TimeRange(
+                        result.source_range.start_time + thing.source_range.start_time,
+                        thing.source_range.duration
+                    )
+                except otio.exceptions.CannotComputeAvailableRangeError:
+                    result.source_range = copy.copy(thing.source_range)
             return result
 
     # if thing is the top level stack, all of its children must be in tracks
