@@ -51,8 +51,6 @@ setuptools.setup(
         "Topic :: Multimedia :: Video :: Display",
         "Topic :: Multimedia :: Video :: Non-Linear Editor",
         "Topic :: Software Development :: Libraries :: Python Modules",
-        "Programming Language :: Python :: 2",
-        "Programming Language :: Python :: 2.7",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
