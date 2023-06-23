@@ -1200,6 +1200,7 @@ def _fix_transitions(thing):
         for child in thing:
             _fix_transitions(child)
 
+
 def _find_child_at_time(target_track, start_time):
     """same as child_at_time but passes through transitions"""
 
@@ -1208,7 +1209,7 @@ def _find_child_at_time(target_track, start_time):
     if isinstance(target_item, otio.schema.Transition):
         parent = target_item.parent()
         index = parent.index(target_item)
-        before = parent[index-1]
+        before = parent[index - 1]
 
         start_local = target_track.transformed_time(
             start_time, parent)
@@ -1216,7 +1217,7 @@ def _find_child_at_time(target_track, start_time):
         if before.range_in_parent().contains(start_local):
             target_item = before
         else:
-            target_item = parent[index+1]
+            target_item = parent[index + 1]
 
         if isinstance(target_item, otio.core.Composition):
             start_local = parent.transformed_time(
@@ -1224,6 +1225,7 @@ def _find_child_at_time(target_track, start_time):
             return _find_child_at_time(target_item, start_local)
 
     return target_item
+
 
 def _attach_markers(collection):
     """Search for markers on tracks and attach them to their corresponding item.
@@ -1612,10 +1614,8 @@ def read_from_file(
     if simplify:
         result = _simplify(result)
 
-
     # Reset transcribe_log debugging
     _TRANSCRIBE_DEBUG = False
-
     return result
 
 

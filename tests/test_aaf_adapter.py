@@ -1109,7 +1109,8 @@ class AAFReaderTests(unittest.TestCase):
 
     def test_multiple_markers_and_transitions(self):
         """
-        Make sure we can transcibe this composition with markers and transitions and timing is correct
+        Make sure we can transcibe this composition with markers and transitions and
+        timing is correct
         """
         timeline = None
 
@@ -1156,8 +1157,12 @@ class AAFReaderTests(unittest.TestCase):
                     self.assertTrue(relative_frame == int(marker.name))
                     # NOTE: relative_frame from markers.txt includes frames
                     # needed from a prevous transition
-                    marker_frame = marker.marked_range.start_time.to_frames() - source_start_frame
-                    self.assertTrue(relative_frame == (marker_frame + transition_offset))
+                    marker_frame = (
+                        marker.marked_range.start_time.to_frames() - source_start_frame
+                    )
+                    self.assertTrue(
+                        relative_frame == (marker_frame + transition_offset)
+                    )
                     self.assertTrue(absolute_frame == (marker_frame + start_frame))
                     index += 1
 
