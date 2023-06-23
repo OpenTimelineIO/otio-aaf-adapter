@@ -33,7 +33,7 @@ setuptools.setup(
     },
     install_requires=[
         "OpenTimelineIO>=0.14.1",
-        "pyaaf2>=1.4.0",
+        "pyaaf2>=1.7.0",
     ],
     extras_require={
         "dev": [
