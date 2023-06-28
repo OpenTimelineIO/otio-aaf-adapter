@@ -5,6 +5,7 @@
 
 Specifies how to transcribe an OpenTimelineIO file into an AAF file.
 """
+from numbers import Rational
 
 import aaf2
 import abc
@@ -13,6 +14,7 @@ import opentimelineio as otio
 import os
 import copy
 import re
+import logging
 
 
 AAF_PARAMETERDEF_PAN = aaf2.auid.AUID("e4962322-2267-11d3-8a4c-0050040ef7d2")
@@ -26,6 +28,8 @@ AAF_PARAMETERDEF_AFX_FG_KEY_OPACITY_U = uuid.UUID(
 AAF_PARAMETERDEF_LEVEL = uuid.UUID("e4962320-2267-11d3-8a4c-0050040ef7d2")
 AAF_VVAL_EXTRAPOLATION_ID = uuid.UUID("0e24dd54-66cd-4f1a-b0a0-670ac3a7a0b3")
 AAF_OPERATIONDEF_SUBMASTER = uuid.UUID("f1db0f3d-8d64-11d3-80df-006008143e6f")
+
+logger = logging.getLogger(__name__)
 
 
 def _is_considered_gap(thing):
@@ -87,6 +91,9 @@ class AAFFileTranscriber:
         self._unique_tapemobs = {}
         self._clip_mob_ids_map = _gather_clip_mob_ids(input_otio, **kwargs)
 
+        # transcribe timeline comments onto composition mob
+        self._transcribe_user_comments(input_otio, self.compositionmob)
+
     def _unique_mastermob(self, otio_clip):
         """Get a unique mastermob, identified by clip metadata mob id."""
         mob_id = self._clip_mob_ids_map.get(otio_clip)
@@ -97,6 +104,14 @@ class AAFFileTranscriber:
             mastermob.mob_id = aaf2.mobid.MobID(mob_id)
             self.aaf_file.content.mobs.append(mastermob)
             self._unique_mastermobs[mob_id] = mastermob
+
+            # transcribe clip comments onto master mob
+            self._transcribe_user_comments(otio_clip, mastermob)
+
+            # transcribe media reference comments onto master mob.
+            # this might overwrite clip comments.
+            self._transcribe_user_comments(otio_clip.media_reference, mastermob)
+
         return mastermob
 
     def _unique_tapemob(self, otio_clip):
@@ -139,6 +154,21 @@ class AAFFileTranscriber:
             raise otio.exceptions.NotSupportedError(
                 f"Unsupported track kind: {otio_track.kind}")
         return transcriber
+
+    def _transcribe_user_comments(self, otio_item, target_mob):
+        """Transcribes user comments on `otio_item` onto `target_mob` in AAF."""
+
+        user_comments = otio_item.metadata.get("AAF", {}).get("UserComments", {})
+        for key, val in user_comments.items():
+            if isinstance(val, (int, str)):
+                target_mob.comments[key] = val
+            elif isinstance(val, (float, Rational)):
+                target_mob.comments[key] = aaf2.rational.AAFRational(val)
+            else:
+                logger.warning(
+                    f"Skip transcribing unsupported comment value of type "
+                    f"'{type(val)}' for key '{key}'."
+                )
 
 
 def validate_metadata(timeline):
