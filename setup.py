@@ -14,7 +14,7 @@ setuptools.setup(
     name="otio-aaf-adapter",
     author="Contributors to the OpenTimelineIO project",
     author_email="otio-discussion@lists.aswf.io",
-    version="0.15.0.dev1",
+    version="1.0.0",
     description="OpenTimelineIO Advanced Authoring Format (AAF) Adapter",
     long_description=long_description,
     long_description_content_type="text/markdown",
