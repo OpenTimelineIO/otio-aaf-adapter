@@ -210,6 +210,11 @@ MARKER_OVER_AUDIO_PATH = os.path.join(
     "marker-over-audio.aaf"
 )
 
+AVID_DATA_TRACK_EXAMPLE_PATH = os.path.join(
+    SAMPLE_DATA_DIR,
+    "avid_data_track_example.aaf"
+)
+
 
 try:
     lib_path = os.environ.get("OTIO_AAF_PYTHON_LIB")
@@ -1617,6 +1622,12 @@ class AAFReaderTests(unittest.TestCase):
 
         self.assertEqual(get_expected_dict(tl_unbaked), expected_unbaked)
         self.assertEqual(get_expected_dict(tl_baked), expected_baked)
+
+    def test_non_av_track_kind(self):
+        timeline = otio.adapters.read_from_file(AVID_DATA_TRACK_EXAMPLE_PATH)
+        self.assertEqual([t.kind for t in timeline.tracks],
+                         ["Video", "AAF_DataEssenceTrack"]
+                         )
 
 
 class AAFWriterTests(unittest.TestCase):
