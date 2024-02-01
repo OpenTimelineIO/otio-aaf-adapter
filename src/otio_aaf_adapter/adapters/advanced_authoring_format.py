@@ -868,8 +868,8 @@ def _transcribe(item, parents, edit_rate, indent=0):
             elif media_kind in ("SoundMasterTrack", "Sound"):
                 result.kind = otio.schema.TrackKind.Audio
             else:
-                # Timecode, Edgecode, others?
-                result.kind = ""
+                # Timecode, Edgecode, Data, ...
+                result.kind = f"AAF_{media_kind}"
 
     # Done!
     return result
