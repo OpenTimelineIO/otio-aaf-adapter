@@ -195,6 +195,16 @@ MARKER_OVER_TRANSITION_PATH = os.path.join(
     "marker-over-transition.aaf",
 )
 
+MULTIPLE_MARKER_OVER_TRANSITION_PATH = os.path.join(
+    SAMPLE_DATA_DIR,
+    "multiple-markers-over-transitions.aaf",
+)
+
+MULTIPLE_MARKER_OVER_TRANSITION_TXT_PATH = os.path.join(
+    SAMPLE_DATA_DIR,
+    "multiple-markers-over-transitions.txt",
+)
+
 MARKER_OVER_AUDIO_PATH = os.path.join(
     SAMPLE_DATA_DIR,
     "marker-over-audio.aaf"
@@ -1101,6 +1111,67 @@ class AAFReaderTests(unittest.TestCase):
             )
 
         self.assertIsNotNone(timeline)
+
+    def test_multiple_markers_and_transitions(self):
+        """
+        Make sure we can transcibe this composition with markers and transitions and
+        timing is correct
+        """
+        timeline = None
+
+        try:
+            timeline = otio.adapters.read_from_file(
+                MULTIPLE_MARKER_OVER_TRANSITION_PATH
+            )
+
+        except Exception as e:
+            print('[ERROR] Transcribing test sample data `{}` caused an exception: {}'.format(  # noqa
+                os.path.basename(MULTIPLE_MARKER_OVER_TRANSITION_PATH),
+                e)
+            )
+
+        self.assertIsNotNone(timeline)
+
+        # read the markers.txt exported from Media Composer
+        marker_postions = []
+        with open(MULTIPLE_MARKER_OVER_TRANSITION_TXT_PATH, 'r') as f:
+            for line in f.readlines():
+                s = line.split()
+                marker_postions.append([int(s[1]), int(s[4])])
+
+        index = 0
+        transition = None
+        for track in timeline.tracks:
+            for item in track:
+                # next item will need the transition
+                if isinstance(item, otio.schema.Transition):
+                    transition = item
+                    continue
+
+                if not hasattr(item, 'markers'):
+                    continue
+
+                start_frame = item.range_in_parent().start_time.to_frames()
+                source_start_frame = item.source_range.start_time.to_frames()
+                transition_offset = 0
+                if transition:
+                    transition_offset = transition.in_offset.to_frames()
+
+                for marker in item.markers:
+                    absolute_frame, relative_frame = marker_postions[index]
+                    self.assertTrue(relative_frame == int(marker.name))
+                    # NOTE: relative_frame from markers.txt includes frames
+                    # needed from a prevous transition
+                    marker_frame = (
+                        marker.marked_range.start_time.to_frames() - source_start_frame
+                    )
+                    self.assertTrue(
+                        relative_frame == (marker_frame + transition_offset)
+                    )
+                    self.assertTrue(absolute_frame == (marker_frame + start_frame))
+                    index += 1
+
+                transition = None
 
     def test_aaf_marker_over_audio_file(self):
         """
