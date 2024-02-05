@@ -100,7 +100,7 @@ jobs:
 
     - name: Upload coverage to Codecov
       if: matrix.python-version == env.GH_COV_PY && matrix.os == env.GH_COV_OS && github.actor != env.GH_DEPENDABOT
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       with:
         flags: unittests
         name: otio-aaf-adapter-codecov
