@@ -8,5 +8,11 @@
             "filepath" : "adapters/advanced_authoring_format.py",
             "suffixes" : ["aaf"]
         }
-    ]
+    ],
+    "hooks" : {
+        "otio_aaf_pre_read_transcribe": [],
+        "otio_aaf_post_read_transcribe": [],
+        "otio_aaf_pre_write_transcribe": [],
+        "otio_aaf_post_write_transcribe": []
+    }
 }
