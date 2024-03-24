@@ -21,10 +21,3 @@ max-line-length = 88
 ignore =
     W503
     W504
-
-[tool:pytest]
-addopts = --cov=otio_aaf_adapter
-
-[bdist_wheel]
-# Let a wheel be compatible with both Python 2 and 3
-universal=1

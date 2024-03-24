@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright Contributors to the OpenTimelineIO project
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "otio-aaf-adapter"
+version = "1.1.0.dev1"
+description = "OpenTimelineIO AAF Adapter"
+authors = [
+  { name="Contributors to the OpenTimelineIO project", email="otio-discussion@lists.aswf.io" },
+]
+license = { file="LICENSE.txt" }
+readme = "README.md"
+requires-python = ">=3.7"
+dependencies = [
+    "opentimelineio >= 0.17.0.dev1",
+    "pyaaf2>=1.4.0"
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Multimedia :: Video :: Display",
+    "Topic :: Multimedia :: Video :: Non-Linear Editor",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
+    "License :: OSI Approved :: Apache Software License",
+    "Natural Language :: English"
+]
+keywords = ["film", "tv", "editing", "editorial", "edit", "non-linear", "aaf", "time", "otio", "otio-adapter"]
+
+[project.urls]
+Homepage = "https://github.com/OpenTimelineIO/otio-aaf-adapter"
+Tracker = "https://github.com/OpenTimelineIO/otio-aaf-adapter/issues"
+
+[project.entry-points."opentimelineio.plugins"]
+otio_aaf_adapter = "otio_aaf_adapter"
+
+[tool.hatch.build.targets.sdist]
+# Ensure the sdist includes a setup.py for older pip versions
+support-legacy = true
+exclude = [".github"]
+
+[tool.pytest.ini_options]
+addopts = "--cov=otio_aaf_adapter"
