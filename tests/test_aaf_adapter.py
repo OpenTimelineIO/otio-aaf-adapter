@@ -1825,6 +1825,50 @@ class AAFWriterTests(unittest.TestCase):
             cl.media_reference.generator_kind = "not slug"
             otio.adapters.write_to_file(tl, tmp_aaf_path)
 
+    def test_aaf_writer_user_comments(self):
+        # construct simple timeline
+        timeline = otio.schema.Timeline()
+        range = otio.opentime.TimeRange(
+            otio.opentime.RationalTime(0, 24),
+            otio.opentime.RationalTime(100, 24),
+        )
+        media_ref = otio.schema.ExternalReference(available_range=range)
+        clip = otio.schema.Clip(source_range=range)
+        clip.media_reference = media_ref
+        timeline.tracks.append(otio.schema.Track(children=[clip]))
+
+        # add comments to clip + timeline
+        original_comments = {
+            "Test_String": "Test_Value",
+            "Test_Unicode": "ラーメン",
+            "Test_Int": 1337,
+            "Test_Float": 13.37,
+            "Test_Bool": True,
+            "Test_Unsupported_List": ["test1", "test2", "test3"],
+            "Test_Unsupported_Dict": {"test_key": "test_value"},
+            "Test_Unsupported_Schema": otio.schema.Marker(name="SomeMarker")
+        }
+
+        expected_comments = {
+            "Test_String": "Test_Value",
+            "Test_Unicode": "ラーメン",
+            "Test_Int": 1337,
+            "Test_Float": aaf2.rational.AAFRational(13.37),
+            "Test_Bool": 1,
+        }
+
+        timeline.metadata["AAF"] = {"UserComments": original_comments}
+        media_ref.metadata["AAF"] = {"UserComments": original_comments}
+
+        _, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
+        otio.adapters.write_to_file(timeline, tmp_aaf_path, use_empty_mob_ids=True)
+
+        with aaf2.open(tmp_aaf_path) as aaf_file:
+            master_mob = next(aaf_file.content.mastermobs())
+            comp_mob = next(aaf_file.content.compositionmobs())
+            self.assertEqual(dict(master_mob.comments.items()), expected_comments)
+            self.assertEqual(dict(comp_mob.comments.items()), expected_comments)
+
     def _verify_aaf(self, aaf_path):
         otio_timeline = otio.adapters.read_from_file(aaf_path, simplify=True)
         fd, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
