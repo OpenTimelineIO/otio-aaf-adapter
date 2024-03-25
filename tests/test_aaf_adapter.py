@@ -219,6 +219,11 @@ BAD_TRACK_NUMBER_ON_MARKER_PATH = os.path.join(
     SAMPLE_DATA_DIR,
     "bad_marker_track_from_avid.aaf"
 )
+NESTED_AUDIO_DISSOLVE_PATH = os.path.join(
+    SAMPLE_DATA_DIR,
+    "nested_audio_dissolve.aaf"
+)
+
 
 try:
     lib_path = os.environ.get("OTIO_AAF_PYTHON_LIB")
@@ -1257,6 +1262,37 @@ class AAFReaderTests(unittest.TestCase):
             )
 
         self.assertIsNotNone(timeline)
+
+    def test_aaf_nested_audio_dissolve(self):
+        timeline = None
+
+        try:
+            timeline = otio.adapters.read_from_file(
+                NESTED_AUDIO_DISSOLVE_PATH
+            )
+
+        except Exception as e:
+            print('[ERROR] Transcribing test sample data `{}` caused an exception: {}'.format(  # noqa
+                os.path.basename(NESTED_AUDIO_DISSOLVE_PATH),
+                e)
+            )
+
+        self.assertIsNotNone(timeline)
+        track = timeline.tracks[0]
+
+        clip = track[0]
+        self.assertIsInstance(clip, otio.schema.Clip)
+        self.assertEqual(clip.source_range.duration.to_frames(), 43)
+
+        transition = track[1]
+        self.assertIsInstance(transition, otio.schema.Transition)
+        self.assertEqual(transition.duration().to_frames(), 3)
+        self.assertEqual(transition.in_offset.to_frames(), 3)
+        self.assertEqual(transition.out_offset.to_frames(), 0)
+
+        gap = track[2]
+        self.assertIsInstance(gap, otio.schema.Gap)
+        self.assertEqual(gap.source_range.duration.to_frames(), 0)
 
     def _verify_user_comments(self, aaf_metadata, expected_md):
 
