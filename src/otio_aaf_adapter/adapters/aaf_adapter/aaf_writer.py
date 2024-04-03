@@ -58,6 +58,27 @@ def _is_considered_gap(thing):
     return False
 
 
+def _nearest_timecode(rate):
+    supported_rates = (24.0,
+                       25.0,
+                       30.0,
+                       60.0)
+    nearest_rate = 0.0
+    min_diff = float("inf")
+    for valid_rate in supported_rates:
+        if valid_rate == rate:
+            return rate
+
+        diff = abs(rate - valid_rate)
+        if diff >= min_diff:
+            continue
+
+        min_diff = diff
+        nearest_rate = valid_rate
+
+    return nearest_rate
+
+
 class AAFAdapterError(otio.exceptions.OTIOError):
     pass
 
@@ -142,6 +163,13 @@ class AAFFileTranscriber:
             tape_timecode_slot.segment.length = int(timecode_length)
             self.aaf_file.content.mobs.append(tapemob)
             self._unique_tapemobs[mob_id] = tapemob
+
+            media = otio_clip.media_reference
+            if isinstance(media, otio.schema.ExternalReference) and media.target_url:
+                locator = self.aaf_file.create.NetworkLocator()
+                locator['URLString'].value = media.target_url
+                tapemob.descriptor["Locator"].append(locator)
+
         return tapemob
 
     def track_transcriber(self, otio_track):
@@ -154,6 +182,34 @@ class AAFFileTranscriber:
             raise otio.exceptions.NotSupportedError(
                 f"Unsupported track kind: {otio_track.kind}")
         return transcriber
+
+    def add_timecode(self, input_otio, default_edit_rate):
+        """
+        Add CompositionMob level timecode track base on global_start_time
+        if available, otherwise start is set to 0.
+        """
+        if input_otio.global_start_time:
+            edit_rate = input_otio.global_start_time.rate
+            start = int(input_otio.global_start_time.value)
+        else:
+            edit_rate = default_edit_rate
+            start = 0
+
+        slot = self.compositionmob.create_timeline_slot(edit_rate)
+        slot.name = "TC"
+
+        # indicated that this is the primary timecode track
+        slot['PhysicalTrackNumber'].value = 1
+
+        # timecode.start is in edit_rate units NOT timecode fps
+        # timecode.fps is only really a hint for a NLE displays on
+        # how to display the start frame index to the user.
+        # currently only selects basic non drop frame rates
+        timecode = self.aaf_file.create.Timecode()
+        timecode.fps = int(_nearest_timecode(edit_rate))
+        timecode.drop = False
+        timecode.start = start
+        slot.segment = timecode
 
     def _transcribe_user_comments(self, otio_item, target_mob):
         """Transcribes user comments on `otio_item` onto `target_mob` in AAF."""
@@ -230,12 +286,13 @@ def _gather_clip_mob_ids(input_otio,
     def _from_aaf_file(clip):
         """ Get the MobID from the AAF file itself."""
         mob_id = None
-        target_url = clip.media_reference.target_url
-        if os.path.isfile(target_url) and target_url.endswith("aaf"):
-            with aaf2.open(clip.media_reference.target_url) as aaf_file:
-                mastermobs = list(aaf_file.content.mastermobs())
-                if len(mastermobs) == 1:
-                    mob_id = mastermobs[0].mob_id
+        if isinstance(clip.media_reference, otio.schema.ExternalReference):
+            target_url = clip.media_reference.target_url
+            if os.path.isfile(target_url) and target_url.endswith("aaf"):
+                with aaf2.open(clip.media_reference.target_url) as aaf_file:
+                    mastermobs = list(aaf_file.content.mastermobs())
+                    if len(mastermobs) == 1:
+                        mob_id = mastermobs[0].mob_id
         return mob_id
 
     def _generate_empty_mobid(clip):
@@ -377,6 +434,11 @@ class _TrackTranscriber:
     def _transition_parameters(self):
         pass
 
+    def aaf_network_locator(self, otio_external_ref):
+        locator = self.aaf_file.create.NetworkLocator()
+        locator['URLString'].value = otio_external_ref.target_url
+        return locator
+
     def aaf_filler(self, otio_gap):
         """Convert an otio Gap into an aaf Filler"""
         length = int(otio_gap.visible_range().duration.value)
@@ -484,6 +546,7 @@ class _TrackTranscriber:
     def aaf_sequence(self, otio_track):
         """Convert an otio Track into an aaf Sequence"""
         sequence = self.aaf_file.create.Sequence(media_kind=self.media_kind)
+        sequence.components.value = []
         length = 0
         for nested_otio_child in otio_track:
             result = self.transcribe(nested_otio_child)
@@ -606,6 +669,7 @@ class VideoTrackTranscriber(_TrackTranscriber):
         timeline_mobslot = self.compositionmob.create_timeline_slot(
             edit_rate=self.edit_rate)
         sequence = self.aaf_file.create.Sequence(media_kind=self.media_kind)
+        sequence.components.value = []
         timeline_mobslot.segment = sequence
         return timeline_mobslot, sequence
 
@@ -622,6 +686,16 @@ class VideoTrackTranscriber(_TrackTranscriber):
         descriptor["VideoLineMap"].value = [42, 0]
         descriptor["SampleRate"].value = 24
         descriptor["Length"].value = 1
+
+        media = otio_clip.media_reference
+        if isinstance(media, otio.schema.ExternalReference):
+            if media.target_url:
+                locator = self.aaf_network_locator(media)
+                descriptor["Locator"].append(locator)
+            if media.available_range:
+                descriptor['SampleRate'].value = media.available_range.duration.rate
+                descriptor["Length"].value = int(media.available_range.duration.value)
+
         return descriptor
 
     def _transition_parameters(self):
@@ -731,6 +805,7 @@ class AudioTrackTranscriber(_TrackTranscriber):
         timeline_mobslot.segment = opgroup
         # Sequence
         sequence = self.aaf_file.create.Sequence(media_kind=self.media_kind)
+        sequence.components.value = []
         sequence.length = total_length
         opgroup.segments.append(sequence)
         return timeline_mobslot, sequence
@@ -746,6 +821,11 @@ class AudioTrackTranscriber(_TrackTranscriber):
         descriptor["Length"].value = int(
             otio_clip.media_reference.available_range.duration.value
         )
+
+        if isinstance(otio_clip.media_reference, otio.schema.ExternalReference):
+            locator = self.aaf_network_locator(otio_clip.media_reference)
+            descriptor["Locator"].append(locator)
+
         return descriptor
 
     def _transition_parameters(self):

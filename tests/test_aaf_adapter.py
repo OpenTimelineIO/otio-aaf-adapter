@@ -238,6 +238,7 @@ try:
                                  Sequence)
     from aaf2.mobs import MasterMob, SourceMob
     from aaf2.misc import VaryingValue
+    from aaf2.mobid import MobID
     could_import_aaf = True
 except (ImportError):
     could_import_aaf = False
@@ -1795,6 +1796,42 @@ class AAFWriterTests(unittest.TestCase):
     def test_aaf_writer_nested_stack(self):
         self._verify_aaf(NESTED_STACK_EXAMPLE_PATH)
 
+    def test_aaf_writer_external_reference(self):
+        target_url = "file:///C%3A/Avid%20MediaFiles/MXF/1/7003_Vi48896FA0V.mxf"
+
+        mob_id = MobID(int=10)
+        metadata = {"AAF": {"SourceID": str(mob_id)}}
+
+        tl = otio.schema.Timeline()
+        cl = otio.schema.Clip("clip0", metadata=metadata)
+
+        cl.source_range = otio.opentime.TimeRange(
+            otio.opentime.RationalTime(0, 24),
+            otio.opentime.RationalTime(100, 24),
+        )
+        tl.tracks.append(otio.schema.Track(kind='Video'))
+        tl.tracks[0].append(cl)
+        cl.media_reference = otio.schema.ExternalReference(target_url,
+                                                           cl.source_range)
+
+        fd, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
+        otio.adapters.write_to_file(tl, tmp_aaf_path)
+
+        self._verify_aaf(tmp_aaf_path)
+
+        with aaf2.open(tmp_aaf_path) as dest:
+            mastermob = dest.content.mobs.get(mob_id, None)
+            self.assertNotEqual(mastermob, None)
+            self.assertEqual(cl.name, mastermob.name)
+            self.assertEqual(mob_id, mastermob.mob_id)
+            self.assertEqual(len(mastermob.slots), 1)
+            source_clip = mastermob.slots[0].segment
+            self.assertEqual(source_clip.media_kind, "Picture")
+            filemob = source_clip.mob
+            self.assertEqual(len(filemob.descriptor['Locator']), 1)
+            locator = filemob.descriptor['Locator'].value[0]
+            self.assertEqual(locator['URLString'].value, target_url)
+
     def test_generator_reference(self):
         tl = otio.schema.Timeline()
         cl = otio.schema.Clip()
@@ -1869,6 +1906,37 @@ class AAFWriterTests(unittest.TestCase):
             self.assertEqual(dict(master_mob.comments.items()), expected_comments)
             self.assertEqual(dict(comp_mob.comments.items()), expected_comments)
 
+    def test_aaf_writer_global_start_time(self):
+        for tc, rate in [("01:00:00:00", 23.97),
+                         ("01:00:00:00", 24),
+                         ("01:00:00:00", 25),
+                         ("01:00:00:00", 29.97),
+                         ("01:00:00:00", 30),
+                         ("01:00:00:00", 59.94),
+                         ("01:00:00:00", 60)]:
+
+            otio_timeline = otio.schema.Timeline()
+            otio_timeline.global_start_time = otio.opentime.from_timecode(tc, rate)
+            fd, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
+            otio.adapters.write_to_file(otio_timeline, tmp_aaf_path)
+
+            self._verify_aaf(tmp_aaf_path)
+
+        for frame, rate in [(100, 12.97),
+                            (100, 3.0),
+                            (100, 26.5),
+                            (100, 31),
+                            (100, 45),
+                            (100, 120.0),
+                            (100, 90.0)]:
+
+            otio_timeline = otio.schema.Timeline()
+            otio_timeline.global_start_time = otio.opentime.RationalTime(frame, rate)
+            fd, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
+            otio.adapters.write_to_file(otio_timeline, tmp_aaf_path)
+
+            self._verify_aaf(tmp_aaf_path)
+
     def _verify_aaf(self, aaf_path):
         otio_timeline = otio.adapters.read_from_file(aaf_path, simplify=True)
         fd, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
@@ -1884,7 +1952,9 @@ class AAFWriterTests(unittest.TestCase):
             compositionmobs = list(dest.content.compositionmobs())
             self.assertEqual(1, len(compositionmobs))
             compositionmob = compositionmobs[0]
-            self.assertEqual(len(otio_timeline.tracks), len(compositionmob.slots))
+
+            # + 1 is for the timecode track
+            self.assertEqual(len(otio_timeline.tracks) + 1, len(compositionmob.slots))
 
             for otio_track, aaf_timeline_mobslot in zip(otio_timeline.tracks,
                                                         compositionmob.slots):
@@ -1926,7 +1996,8 @@ class AAFWriterTests(unittest.TestCase):
                                      type_mapping[type(otio_child)])
 
                     if isinstance(aaf_component, SourceClip):
-                        self._verify_compositionmob_sourceclip_structure(aaf_component)
+                        self._verify_compositionmob_sourceclip_structure(otio_child,
+                                                                         aaf_component)
 
                     if isinstance(aaf_component, aaf2.components.OperationGroup):
                         nested_aaf_segments = aaf_component.segments
@@ -1937,6 +2008,16 @@ class AAFWriterTests(unittest.TestCase):
                     else:
                         self._is_otio_aaf_same(otio_child, aaf_component)
 
+            # check the global_start_time and timecode slot
+            for slot in compositionmob.slots:
+                if isinstance(slot.segment, Timecode):
+                    self.assertEqual(otio_timeline.global_start_time.rate,
+                                     float(slot.edit_rate))
+                    self.assertEqual(otio_timeline.global_start_time.value,
+                                     slot.segment.start)
+                    self.assertTrue(slot.segment.fps in [24, 25, 30, 60])
+                    self.assertTrue(slot['PhysicalTrackNumber'].value == 1)
+
         # Inspect the OTIO -> AAF -> OTIO file
         roundtripped_otio = otio.adapters.read_from_file(tmp_aaf_path, simplify=True)
 
@@ -1946,7 +2027,7 @@ class AAFWriterTests(unittest.TestCase):
         self.assertEqual(otio_timeline.duration().rate,
                          roundtripped_otio.duration().rate)
 
-    def _verify_compositionmob_sourceclip_structure(self, compmob_clip):
+    def _verify_compositionmob_sourceclip_structure(self, otio_child, compmob_clip):
         self.assertTrue(isinstance(compmob_clip, SourceClip))
         self.assertTrue(isinstance(compmob_clip.mob, MasterMob))
         mastermob = compmob_clip.mob
@@ -1956,6 +2037,12 @@ class AAFWriterTests(unittest.TestCase):
             self.assertTrue(isinstance(mastermob_clip.mob, SourceMob))
             filemob = mastermob_clip.mob
 
+            if (otio_child.media_reference):
+                self.assertEqual(len(filemob.descriptor['Locator']), 1)
+                locator = filemob.descriptor['Locator'].value[0]
+                self.assertEqual(locator['URLString'].value,
+                                 otio_child.media_reference.target_url)
+
             self.assertEqual(1, len(filemob.slots))
             filemob_clip = filemob.slots[0].segment
 
@@ -1963,6 +2050,12 @@ class AAFWriterTests(unittest.TestCase):
             self.assertTrue(isinstance(filemob_clip.mob, SourceMob))
             tapemob = filemob_clip.mob
             self.assertTrue(len(tapemob.slots) >= 2)
+
+            if (otio_child.media_reference):
+                self.assertEqual(len(tapemob.descriptor['Locator']), 1)
+                locator = tapemob.descriptor['Locator'].value[0]
+                self.assertEqual(locator['URLString'].value,
+                                 otio_child.media_reference.target_url)
 
             timecode_slots = [tape_slot for tape_slot in tapemob.slots
                               if isinstance(tape_slot.segment,
