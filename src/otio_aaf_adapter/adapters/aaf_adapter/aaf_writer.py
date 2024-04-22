@@ -6,8 +6,13 @@
 Specifies how to transcribe an OpenTimelineIO file into an AAF file.
 """
 from numbers import Rational
+from pathlib import Path
+from typing import Tuple
+from typing import List
+from typing import Optional
 
 import aaf2
+import aaf2.mobs
 import abc
 import uuid
 import opentimelineio as otio
@@ -16,6 +21,8 @@ import copy
 import re
 import logging
 
+import datetime
+import getpass
 
 AAF_PARAMETERDEF_PAN = aaf2.auid.AUID("e4962322-2267-11d3-8a4c-0050040ef7d2")
 AAF_OPERATIONDEF_MONOAUDIOPAN = aaf2.auid.AUID("9d2ea893-0968-11d3-8a38-0050040ef7d2")
@@ -100,8 +107,9 @@ class AAFFileTranscriber:
         AAFFileTranscriber requires an input timeline and an output pyaaf2 file handle.
 
         Args:
-            input_otio: an input OpenTimelineIO timeline
-            aaf_file: a pyaaf2 file handle to an output file
+            input_otio(otio.schema.Timeline): an input OpenTimelineIO timeline
+            aaf_file(aaf2.file.AAFFile): a pyaaf2 file handle to an output file
+
         """
         self.aaf_file = aaf_file
         self.compositionmob = self.aaf_file.create.CompositionMob()
@@ -362,8 +370,9 @@ class _TrackTranscriber:
         _TrackTranscriber
 
         Args:
-            root_file_transcriber: the corresponding 'parent' AAFFileTranscriber object
-            otio_track: the given otio_track to convert
+            root_file_transcriber(AAFFileTranscriber): the corresponding 'parent'
+                AAFFileTranscriber object
+            otio_track(otio.schema.Track): the given otio_track to convert
         """
         self.root_file_transcriber = root_file_transcriber
         self.compositionmob = root_file_transcriber.compositionmob
@@ -372,6 +381,9 @@ class _TrackTranscriber:
         self.edit_rate = self.otio_track.find_children()[0].duration().rate
         self.timeline_mobslot, self.sequence = self._create_timeline_mobslot()
         self.timeline_mobslot.name = self.otio_track.name
+        self.timeline_mobslot[
+            'PhysicalTrackNumber'
+        ].value = self._aaf_physical_track_number
 
     def transcribe(self, otio_child):
         """Transcribe otio child to corresponding AAF object"""
@@ -396,13 +408,13 @@ class _TrackTranscriber:
 
     @property
     @abc.abstractmethod
-    def media_kind(self):
+    def media_kind(self) -> str:
         """Return the string for what kind of track this is."""
         pass
 
     @property
     @abc.abstractmethod
-    def _master_mob_slot_id(self):
+    def _master_mob_slot_id(self) -> int:
         """
         Return the MasterMob Slot ID for the corresponding track media kind
         """
@@ -413,8 +425,14 @@ class _TrackTranscriber:
         # MasterMob slot 2. While this is a little inadequate, it works for now
         pass
 
+    @property
     @abc.abstractmethod
-    def _create_timeline_mobslot(self):
+    def _aaf_physical_track_number(self) -> int:
+        pass
+
+    @abc.abstractmethod
+    def _create_timeline_mobslot(self) \
+            -> Tuple[aaf2.mobslots.TimelineMobSlot, aaf2.components.Sequence]:
         """
         Return a timeline_mobslot and sequence for this track.
 
@@ -427,11 +445,12 @@ class _TrackTranscriber:
         pass
 
     @abc.abstractmethod
-    def default_descriptor(self, otio_clip):
+    def default_descriptor(self, otio_clip) -> aaf2.essence.EssenceDescriptor:
         pass
 
     @abc.abstractmethod
-    def _transition_parameters(self):
+    def _transition_parameters(self) -> \
+            Tuple[List[aaf2.dictionary.ParameterDef], aaf2.misc.Parameter]:
         pass
 
     def aaf_network_locator(self, otio_external_ref):
@@ -458,8 +477,8 @@ class _TrackTranscriber:
 
         offset = (otio_clip.visible_range().start_time -
                   otio_clip.available_range().start_time)
-        start = offset.value
-        length = otio_clip.visible_range().duration.value
+        start = int(offset.value)
+        length = int(otio_clip.visible_range().duration.value)
 
         compmob_clip = self.compositionmob.create_source_clip(
             slot_id=self.timeline_mobslot.slot_id,
@@ -542,6 +561,134 @@ class _TrackTranscriber:
         transition["CutPoint"].value = otio_transition.metadata["AAF"]["CutPoint"]
         transition["DataDefinition"].value = datadef
         return transition
+
+    def _otio_marker_color_to_aaf_marker_color(self,
+                                               otio_color: Optional[
+                                                   otio.schema.MarkerColor
+                                               ]) -> dict:
+        color_map = {
+            otio.schema.MarkerColor.RED: {
+                "blue": 6564,
+                "green": 12134,
+                "red": 41471
+            },
+            otio.schema.MarkerColor.PINK: {
+                # not in MC, using red instead
+                "blue": 6564,
+                "green": 12134,
+                "red": 41471
+            },
+            otio.schema.MarkerColor.ORANGE: {
+                # not in MC, using red instead
+                "blue": 6564,
+                "green": 12134,
+                "red": 41471
+            },
+            otio.schema.MarkerColor.YELLOW: {
+                "blue": 6553,
+                "green": 58981,
+                "red": 58981
+            },
+            otio.schema.MarkerColor.GREEN: {
+                "blue": 13107,
+                "green": 52428,
+                "red": 13107
+            },
+            otio.schema.MarkerColor.CYAN: {
+                "blue": 52428,
+                "green": 52428,
+                "red": 13107
+            },
+            otio.schema.MarkerColor.BLUE: {
+                "blue": 52428,
+                "green": 13107,
+                "red": 13107
+            },
+            otio.schema.MarkerColor.PURPLE: {
+                # not in MC, using blue instead
+                "blue": 52428,
+                "green": 13107,
+                "red": 13107
+            },
+            otio.schema.MarkerColor.MAGENTA: {
+                "blue": 52428,
+                "green": 13107,
+                "red": 52428
+            },
+            otio.schema.MarkerColor.WHITE: {
+                "blue": 65535,
+                "green": 65535,
+                "red": 65534
+            },
+            otio.schema.MarkerColor.BLACK: {
+                "blue": 0,
+                "green": 0,
+                "red": 0
+            }
+        }
+        return color_map.get(otio_color, color_map[otio.schema.MarkerColor.RED])
+
+    def _transcribe_marker(self,
+                           otio_marker: otio.schema.Marker,
+                           otio_marker_parent: otio.core.Item,
+                           aaf_sequence: aaf2.components.Sequence):
+        username = otio_marker.metadata.get(
+            "AAF", {}
+        ).get("CommentMarkerUser", getpass.getuser())
+
+        color = otio_marker.metadata.get(
+            "AAF", {}
+        ).get("CommentMarkerColor")
+        if not color:
+            color = self._otio_marker_color_to_aaf_marker_color(otio_marker.color)
+
+        transformed_range = otio_marker_parent.transformed_time_range(
+            otio_marker.marked_range, self.otio_track
+        )
+
+        marker = self.aaf_file.create.DescriptiveMarker()
+        # set all possible slots described by markers
+        # FIX: Markers can appear twice in the Avid marker list at the same time
+        marker['DescribedSlots'].value = {1, 2, 3, 4, 10, 11}
+        marker['Position'].value = int(transformed_range.start_time.value)
+        marker['Comment'].value = otio_marker.name
+        marker['CommentMarkerUser'].value = username
+        marker['CommentMarkerColor'].value = color
+
+        # FIX: The datetime doesn't correctly show in MC still
+        time_now = datetime.datetime.now()
+        marker['CommentMarkerTime'].value = time_now.strftime("%H:%M")
+        marker['CommentMarkerDate'].value = time_now.strftime("%m/%d/%Y")
+
+        aaf_sequence.components.append(marker)
+
+    def transcribe_aaf_descriptive_markers(self):
+        otio_markers_parents = {}
+        for otio_marker in self.otio_track.markers:
+            otio_markers_parents[otio_marker] = self.otio_track
+
+        for track_child in self.otio_track.find_children():
+            child_markers = getattr(track_child, "markers", [])
+            for child_marker in child_markers:
+                otio_markers_parents[child_marker] = track_child
+
+        if not otio_markers_parents:
+            return
+
+        event_mob_slot = self.aaf_file.create.EventMobSlot()
+        event_mob_slot['EditRate'].value = self.edit_rate
+        event_mob_slot['SlotID'].value = 1000
+        event_mob_slot[
+            'PhysicalTrackNumber'
+        ].value = self._aaf_physical_track_number
+
+        sequence = self.aaf_file.create.Sequence("DescriptiveMetadata")
+
+        for otio_marker, marker_parent in otio_markers_parents.items():
+            self._transcribe_marker(otio_marker, marker_parent, sequence)
+
+        event_mob_slot.segment = sequence
+        self.compositionmob.slots.append(event_mob_slot)
 
     def aaf_sequence(self, otio_track):
         """Convert an otio Track into an aaf Sequence"""
@@ -660,6 +807,14 @@ class VideoTrackTranscriber(_TrackTranscriber):
     def _master_mob_slot_id(self):
         return 1
 
+    @property
+    def _aaf_physical_track_number(self) -> int:
+        video_tracks = []
+        for track in self.otio_track.parent():
+            if track.kind == otio.schema.TrackKind.Video:
+                video_tracks.append(track)
+        return video_tracks.index(self.otio_track) + 1
+
     def _create_timeline_mobslot(self):
         """
         Create a Sequence container (TimelineMobSlot) and Sequence.
@@ -749,6 +904,14 @@ class AudioTrackTranscriber(_TrackTranscriber):
     @property
     def _master_mob_slot_id(self):
         return 2
+
+    @property
+    def _aaf_physical_track_number(self) -> int:
+        audio_tracks = []
+        for track in self.otio_track.parent():
+            if track.kind == otio.schema.TrackKind.Audio:
+                audio_tracks.append(track)
+        return audio_tracks.index(self.otio_track) + 1
 
     def aaf_sourceclip(self, otio_clip):
         # Parameter Definition
