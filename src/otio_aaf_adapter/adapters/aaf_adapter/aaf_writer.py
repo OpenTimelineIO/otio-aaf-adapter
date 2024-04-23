@@ -6,7 +6,6 @@
 Specifies how to transcribe an OpenTimelineIO file into an AAF file.
 """
 from numbers import Rational
-from pathlib import Path
 from typing import Tuple
 from typing import List
 from typing import Optional
@@ -490,6 +489,16 @@ class _TrackTranscriber:
         compmob_clip.mob = mastermob
         compmob_clip.slot = mastermob_slot
         compmob_clip.slot_id = mastermob_slot.slot_id
+
+        # check if we need to set mark-in / mark-out
+        if otio_clip.visible_range() != otio_clip.available_range():
+            mastermob_slot["MarkIn"].value = int(
+                otio_clip.visible_range().start_time.value
+            )
+            mastermob_slot["MarkOut"].value = int(
+                otio_clip.visible_range().end_time_exclusive().value
+            )
+
         return compmob_clip
 
     def aaf_transition(self, otio_transition):
