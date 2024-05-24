@@ -693,18 +693,35 @@ class VideoTrackTranscriber(_TrackTranscriber):
         return timeline_mobslot, sequence
 
     def default_descriptor(self, otio_clip):
-        # TODO: Determine if these values are the correct, and if so,
-        # maybe they should be in the AAF metadata
         descriptor = self.aaf_file.create.CDCIDescriptor()
-        descriptor["ComponentWidth"].value = 8
-        descriptor["HorizontalSubsampling"].value = 2
-        descriptor["ImageAspectRatio"].value = "16/9"
-        descriptor["StoredWidth"].value = 1920
-        descriptor["StoredHeight"].value = 1080
-        descriptor["FrameLayout"].value = "FullFrame"
-        descriptor["VideoLineMap"].value = [42, 0]
-        descriptor["SampleRate"].value = 24
-        descriptor["Length"].value = 1
+        descriptor_dict = otio_clip.media_reference.metadata.get("AAF", {}).get(
+            "EssenceDescription", {})
+
+        video_linemap = descriptor_dict.get("VideoLineMap", [42, 0])
+        video_linemap = [int(x) for x in video_linemap]
+
+        descriptor["ComponentWidth"].value = int(
+            descriptor_dict.get("ComponentWidth", 8)
+        )
+        descriptor["HorizontalSubsampling"].value = int(
+            descriptor_dict.get("HorizontalSubsampling", 2)
+        )
+        descriptor["ImageAspectRatio"].value = descriptor_dict.get(
+            "ImageAspectRatio", "16/9"
+        )
+        descriptor["StoredWidth"].value = int(
+            descriptor_dict.get("StoredWidth", 1920)
+        )
+        descriptor["StoredHeight"].value = int(
+            descriptor_dict.get("StoredHeight", 1080)
+        )
+        descriptor["FrameLayout"].value = descriptor_dict.get(
+            "FrameLayout", "FullFrame"
+        )
+        descriptor["VideoLineMap"].value = video_linemap
+
+        descriptor["SampleRate"].value = int(descriptor_dict.get("SampleRate", 24))
+        descriptor["Length"].value = int(descriptor_dict.get("Length", 1))
 
         media = otio_clip.media_reference
         if isinstance(media, otio.schema.ExternalReference):
@@ -714,6 +731,9 @@ class VideoTrackTranscriber(_TrackTranscriber):
             if media.available_range:
                 descriptor['SampleRate'].value = media.available_range.duration.rate
                 descriptor["Length"].value = int(media.available_range.duration.value)
+
+        for key, value in descriptor_dict.items():
+            descriptor[key].value = value
 
         return descriptor
 
@@ -848,19 +868,32 @@ class AudioTrackTranscriber(_TrackTranscriber):
 
     def default_descriptor(self, otio_clip):
         descriptor = self.aaf_file.create.PCMDescriptor()
-        descriptor["AverageBPS"].value = 96000
-        descriptor["BlockAlign"].value = 2
-        descriptor["QuantizationBits"].value = 16
-        descriptor["AudioSamplingRate"].value = 48000
-        descriptor["Channels"].value = 1
-        descriptor["SampleRate"].value = 48000
-        descriptor["Length"].value = int(
-            otio_clip.media_reference.available_range.duration.value
+        descriptor_dict = otio_clip.media_reference.metadata.get("AAF", {}).get(
+            "EssenceDescription", {})
+
+        sample_rate = int(descriptor_dict.get("SampleRate", 48000))
+        descriptor_dict["AverageBPS"] = int(descriptor_dict.get("AverageBPS", 96000))
+        descriptor_dict["BlockAlign"] = int(descriptor_dict.get("BlockAlign", 2))
+        descriptor_dict["QuantizationBits"] = int(
+            descriptor_dict.get("QuantizationBits", 16)
         )
 
         if isinstance(otio_clip.media_reference, otio.schema.ExternalReference):
             locator = self.aaf_network_locator(otio_clip.media_reference)
             descriptor["Locator"].append(locator)
+
+        descriptor_dict["AudioSamplingRate"] = int(
+            descriptor_dict.get("AudioSamplingRate", 48000)
+        )
+        descriptor_dict["Channels"] = int(descriptor_dict.get("Channels", 1))
+        descriptor_dict["SampleRate"] = sample_rate
+        descriptor_dict["Length"] = int(descriptor_dict.get("Length", int(
+            otio_clip.media_reference.available_range.duration.rescaled_to(
+                sample_rate).value
+        )))
+
+        for key, value in descriptor_dict.items():
+            descriptor[key].value = value
 
         return descriptor
 
