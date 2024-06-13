@@ -67,6 +67,10 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         otio-version: ["main", "0.17.0"]
         python-version: ["3.7", "3.8", "3.9", "3.10", "3.11"]
+        exclude:
+          - { os: macos-latest, python-version: 3.7 }
+          - { os: macos-latest, python-version: 3.8 }
+          - { os: macos-latest, python-version: 3.9 }
 
     name: ${{ matrix.os }} py-${{ matrix.python-version }} otio-${{ matrix.otio-version }}
     runs-on: ${{ matrix.os }}
@@ -93,7 +97,7 @@ jobs:
         if [[ "${{ matrix.otio-version }}" == "main" ]]; then
           pip install "git+https://github.com/AcademySoftwareFoundation/OpenTimelineIO.git@extract_adapters"
         else
-          pip install OpenTimelineIO>=${{ matrix.otio-version }} --pre --only-binary :all:
+          pip install OpenTimelineIO>=${{ matrix.otio-version }} --only-binary :all:
         fi
 
     - name: Run Unit Tests
