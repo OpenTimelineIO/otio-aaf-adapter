@@ -93,7 +93,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install pytest pytest-cov wheel -V pyaaf2
         if [[ "${{ matrix.otio-version }}" == "main" ]]; then
-          pip install "git+https://github.com/AcademySoftwareFoundation/OpenTimelineIO.git@extract_adapters"
+          pip install "git+https://github.com/AcademySoftwareFoundation/OpenTimelineIO.git"
         else
           pip install OpenTimelineIO>=${{ matrix.otio-version }} --only-binary :all:
         fi
