@@ -114,6 +114,7 @@ class AAFFileTranscriber:
 
         # transcribe timeline comments onto composition mob
         self._transcribe_user_comments(input_otio, self.compositionmob)
+        self._transcribe_mob_attributes(input_otio, self.compositionmob)
 
     def _unique_mastermob(self, otio_clip):
         """Get a unique mastermob, identified by clip metadata mob id."""
@@ -126,12 +127,14 @@ class AAFFileTranscriber:
             self.aaf_file.content.mobs.append(mastermob)
             self._unique_mastermobs[mob_id] = mastermob
 
-            # transcribe clip comments onto master mob
+            # transcribe clip comments / mob attributes onto master mob
             self._transcribe_user_comments(otio_clip, mastermob)
+            self._transcribe_mob_attributes(otio_clip, mastermob)
 
-            # transcribe media reference comments onto master mob.
-            # this might overwrite clip comments.
+            # transcribe media reference comments / mob attributes onto master mob.
+            # this might overwrite clip comments / attributes.
             self._transcribe_user_comments(otio_clip.media_reference, mastermob)
+            self._transcribe_mob_attributes(otio_clip.media_reference, mastermob)
 
         return mastermob
 
@@ -225,6 +228,22 @@ class AAFFileTranscriber:
                     f"Skip transcribing unsupported comment value of type "
                     f"'{type(val)}' for key '{key}'."
                 )
+
+    def _transcribe_mob_attributes(self, otio_item, target_mob):
+        """Transcribes mob attribute list onto the `target_mob`.
+        This can be used to roundtrip specific mob config values, like audio channel
+        settings.
+        """
+        mob_attr_map = otio_item.metadata.get("AAF", {}).get("MobAttributeList", {})
+        mob_attr_list = aaf2.misc.TaggedValueHelper(target_mob['MobAttributeList'])
+        for key, val in mob_attr_map.items():
+            if isinstance(val, (int, str)):
+                mob_attr_list[key] = val
+            elif isinstance(val, (float, Rational)):
+                mob_attr_list[key] = aaf2.rational.AAFRational(val)
+            else:
+                raise ValueError(f"Unsupported mob attribute type '{type(val)}' for "
+                                 f"key '{key}'.")
 
 
 def validate_metadata(timeline):
