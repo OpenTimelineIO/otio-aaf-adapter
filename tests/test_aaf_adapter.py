@@ -1906,6 +1906,30 @@ class AAFWriterTests(unittest.TestCase):
             self.assertEqual(dict(master_mob.comments.items()), expected_comments)
             self.assertEqual(dict(comp_mob.comments.items()), expected_comments)
 
+    def test_aaf_writer_metadata_roundtrip(self):
+        """Tries to roundtrip metadata through AAF and `MobAttributeList`."""
+        og_aaf_tl = otio.adapters.read_from_file(ONE_AUDIO_CLIP_PATH)
+        clip = og_aaf_tl.find_clips()[0]
+
+        # change a value to test roundtrip
+        clip.media_reference.metadata["AAF"]["MobAttributeList"]["_USER_POS"] = 2
+        _, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
+        otio.adapters.write_to_file(og_aaf_tl, tmp_aaf_path)
+
+        roundtripped_tl = otio.adapters.read_from_file(tmp_aaf_path)
+
+        clip = roundtripped_tl.find_clips()[0]
+        expected = {
+            "_IMPORTSETTING": "__AttributeList",
+            "_SAVED_AAF_AUDIO_LENGTH": 0,
+            "_SAVED_AAF_AUDIO_RATE_DEN": 1,
+            "_SAVED_AAF_AUDIO_RATE_NUM": 24,
+            "_USER_POS": 2,
+            "_VERSION": 2
+        }
+        self.assertEqual(clip.media_reference.metadata["AAF"]["MobAttributeList"],
+                         expected)
+
     def test_aaf_writer_global_start_time(self):
         for tc, rate in [("01:00:00:00", 23.97),
                          ("01:00:00:00", 24),
