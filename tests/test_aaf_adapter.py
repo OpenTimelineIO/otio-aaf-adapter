@@ -2031,6 +2031,38 @@ class AAFWriterTests(unittest.TestCase):
 
             self.assertEqual(param_dicts, expected)
 
+    def test_essence_descriptor(self):
+        """Tests custom values for essence descriptor
+        """
+        tl = otio.schema.Timeline()
+        range = otio.opentime.TimeRange(
+            start_time=otio.opentime.RationalTime(0, 24),
+            duration=otio.opentime.RationalTime(100, 24),
+        )
+        clip = otio.schema.Clip(source_range=range)
+        clip.media_reference = otio.schema.MissingReference(available_range=range)
+        tl.tracks.append(otio.schema.Track())
+        tl.tracks[0].append(clip)
+
+        # set custom essence descriptor values
+        clip.media_reference.metadata["AAF"] = {
+            "SourceID": str(MobID(int=13)),
+            "EssenceDescription": {
+                "SampleRate": 48,
+                "Length": 100
+            }
+        }
+
+        # write to temp AAf file
+        _, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
+        otio.adapters.write_to_file(tl, tmp_aaf_path)
+
+        # check if essence descriptor parameters in AAF file match
+        with aaf2.open(tmp_aaf_path) as aaf_file:
+            source_mob = list(aaf_file.content.sourcemobs())[1]
+            self.assertEqual(source_mob.descriptor['Length'].value, 100)
+            self.assertEqual(source_mob.descriptor['SampleRate'].value, 48)
+
     def _verify_aaf(self, aaf_path):
         otio_timeline = otio.adapters.read_from_file(aaf_path, simplify=True)
         fd, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
