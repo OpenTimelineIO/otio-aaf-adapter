@@ -762,20 +762,37 @@ class AudioTrackTranscriber(_TrackTranscriber):
                                                            "LinearInterp",
                                                            "LinearInterp")
         self.aaf_file.dictionary.register_def(interp_def)
-        # PointList
-        length = int(otio_clip.duration().value)
-        c1 = self.aaf_file.create.ControlPoint()
-        c1["ControlPointSource"].value = 2
-        c1["Time"].value = aaf2.rational.AAFRational(f"0/{length}")
-        c1["Value"].value = 0
-        c2 = self.aaf_file.create.ControlPoint()
-        c2["ControlPointSource"].value = 2
-        c2["Time"].value = aaf2.rational.AAFRational(f"{length - 1}/{length}")
-        c2["Value"].value = 0
+
+        # generate PointList for pan
         varying_value = self.aaf_file.create.VaryingValue()
         varying_value.parameterdef = param_def
         varying_value["Interpolation"].value = interp_def
-        varying_value["PointList"].extend([c1, c2])
+
+        length = int(otio_clip.duration().value)
+
+        # default pan points are mid pan
+        default_points = [
+            {
+                "ControlPointSource": 2,
+                "Time": f"0/{length}",
+                "Value": "1/2",
+            },
+            {
+                "ControlPointSource": 2,
+                "Time": f"{length - 1}/{length}",
+                "Value": "1/2",
+            }
+        ]
+        cp_dict_list = otio_clip.metadata.get("AAF", {}).get("Pan", {}).get(
+            "ControlPoints", default_points)
+
+        for cp_dict in cp_dict_list:
+            point = self.aaf_file.create.ControlPoint()
+            point["Time"].value = aaf2.rational.AAFRational(cp_dict["Time"])
+            point["Value"].value = aaf2.rational.AAFRational(cp_dict["Value"])
+            point["ControlPointSource"].value = cp_dict["ControlPointSource"]
+            varying_value["PointList"].append(point)
+
         opgroup = self.timeline_mobslot.segment
         opgroup.parameters.append(varying_value)
 

@@ -1937,6 +1937,76 @@ class AAFWriterTests(unittest.TestCase):
 
             self._verify_aaf(tmp_aaf_path)
 
+    def test_aaf_writer_audio_pan(self):
+        """Test Clip with custom audio pan values"""
+        tl = otio.schema.Timeline()
+
+        # Add an audio clip with pan metadata
+        clip = otio.schema.Clip(
+            name="Panned Audio Clip",
+            metadata={},
+            source_range=otio.opentime.TimeRange(
+                start_time=otio.opentime.RationalTime(0, 24),
+                duration=otio.opentime.RationalTime(100, 24),
+            )
+        )
+        clip.media_reference = otio.schema.MissingReference(
+            available_range=otio.opentime.TimeRange(
+                start_time=otio.opentime.RationalTime(0, 24),
+                duration=otio.opentime.RationalTime(100, 24),
+            ))
+
+        # Add pan metadata
+        clip.metadata["AAF"] = {
+            "Pan": {
+                "ControlPoints": [
+                    {
+                        "ControlPointSource": 2,
+                        "Time": "0",
+                        "Value": "0",
+                    },
+                    {
+                        "ControlPointSource": 2,
+                        "Time": "100",
+                        "Value": "1",
+                    }
+                ]
+            },
+            "SourceID": "urn:smpte:umid:060a2b34.01010101.01010f00."
+                        "13000000.060e2b34.7f7f2a80.5c9e6a3b.ace913a2"
+        }
+
+        tl.tracks.append(
+            otio.schema.Track(children=[clip], kind=otio.schema.TrackKind.Audio)
+        )
+
+        _, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
+        otio.adapters.write_to_file(tl, tmp_aaf_path)
+        print(tmp_aaf_path)
+
+        # verify pan values in AAF file
+        with aaf2.open(tmp_aaf_path) as aaf_file:
+            mob = next(aaf_file.content.compositionmobs())
+            slot = mob.slots[0]
+            parameter = list(slot.segment.parameters)[0]
+
+            # extract the pan values
+            param_dicts = [
+                {k: v.value for k, v in dict(p).items()}
+                for p in parameter.pointlist
+            ]
+
+            expected = [
+                {'ControlPointSource': 2,
+                 'Time': aaf2.rational.AAFRational(0, 1),
+                 'Value': aaf2.rational.AAFRational(0, 1)},
+                {'ControlPointSource': 2,
+                 'Time': aaf2.rational.AAFRational(100, 1),
+                 'Value': aaf2.rational.AAFRational(1, 1)}
+            ]
+
+            self.assertEqual(param_dicts, expected)
+
     def _verify_aaf(self, aaf_path):
         otio_timeline = otio.adapters.read_from_file(aaf_path, simplify=True)
         fd, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
