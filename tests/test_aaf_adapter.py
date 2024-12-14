@@ -1931,12 +1931,12 @@ class AAFWriterTests(unittest.TestCase):
                          expected)
 
     def test_aaf_writer_global_start_time(self):
-        for tc, rate in [("01:00:00:00", 23.97),
+        for tc, rate in [("01:00:00:00", 24000 / 1001),
                          ("01:00:00:00", 24),
                          ("01:00:00:00", 25),
-                         ("01:00:00:00", 29.97),
+                         ("01:00:00:00", 30000 / 1001),
                          ("01:00:00:00", 30),
-                         ("01:00:00:00", 59.94),
+                         ("01:00:00:00", 60000 / 1001),
                          ("01:00:00:00", 60)]:
 
             otio_timeline = otio.schema.Timeline()
