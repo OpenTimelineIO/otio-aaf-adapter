@@ -101,6 +101,10 @@ LINEAR_SPEED_EFFECTS_EXAMPLE_PATH = os.path.join(
     SAMPLE_DATA_DIR,
     "linear_speed_effects.aaf"
 )
+TIME_WARP_TEST_SUITE_PATH = os.path.join(
+    SAMPLE_DATA_DIR,
+    "time_warp_test.avid_media_composer.aaf"
+)
 TIMECODE_EXAMPLE_PATH = os.path.join(
     SAMPLE_DATA_DIR,
     "timecode_test.aaf"
@@ -783,6 +787,124 @@ class AAFReaderTests(unittest.TestCase):
         ]
         actual = [
             round(clip.effects[0].time_scalar * 100.0, 2) for clip in track[1:]
+        ]
+        self.assertEqual(expected, actual)
+
+    def test_read_time_warp_test_suite(self):
+        timeline = otio.adapters.read_from_file(
+            TIME_WARP_TEST_SUITE_PATH
+        )
+        video_tracks = timeline.video_tracks()
+        self.assertEqual(1, len(video_tracks))
+        track = video_tracks[0]
+        self.assertEqual(77, len(track))  # clips + gaps
+        clips = list(track.find_clips())
+        self.assertEqual(41, len(clips))  # just clips
+
+        for clip in clips:
+            self.assertIsInstance(clip, otio.schema.Clip)
+            self.assertTrue(len(clip.effects) <= 1)
+            if len(clip.effects) > 0:
+                effect = clip.effects[0]
+                is_linear = isinstance(effect, otio.schema.LinearTimeWarp)
+                is_freeze = isinstance(effect, otio.schema.FreezeFrame)
+                self.assertTrue(is_linear or is_freeze)
+
+        expected = [
+            # - Full clip (no effects)
+            None,
+            # - Segments:
+            #   - Segment at start (no effects)
+            #   - Segment in middle (no effects)
+            #   - Segment at end (no effects)
+            None,
+            None,
+            None,
+            # - Freeze frames:
+            #   - Freeze frame at start
+            #   - Freeze frame in middle
+            #   - Freeze frame at end
+            0.0,
+            0.0,
+            0.0,
+            # - Linear time warps by percentage
+            #   - Identity 100% speed
+            #   - Slow down to 99% speed
+            #   - Slow down to 90% speed
+            #   - Slow down to 50% speed
+            #   - Slow down to 10% speed
+            #   - Speed up to 101% speed
+            #   - Speed up to 110% speed
+            #   - Speed up to 2x (200%) speed
+            #   - Speed up to 10x (1000%) speed
+            1.0,
+            0.99,
+            0.90,
+            0.50,
+            0.10,
+            1.01,
+            1.10,
+            2.0,
+            10.0,
+            # - Linear time warps fit-to-fill
+            #   - Fit-to-fill 99 frames into 100
+            #   - Fit-to-fill 90 frames into 100
+            #   - Fit-to-fill 50 frames into 100
+            #   - Fit-to-fill 33 frames into 100
+            #   - Fit-to-fill 5 frames into 100
+            #   - Fit-to-fill 100 frames into 99
+            #   - Fit-to-fill 100 frames into 50
+            #   - Fit-to-fill 100 frames into 33
+            #   - Fit-to-fill 100 frames into 10
+            #   - Fit-to-fill 100 frames into 9
+            0.99,
+            0.90,
+            0.50,
+            0.33,
+            0.05,
+            1.01,
+            2.0,
+            3.03,
+            10.0,
+            11.11,
+            # - Linear time warps trim-to-fill ("trim" is different from "fit")
+            #   - Trim-to-fill 99 frames into 100
+            #   - Trim-to-fill 90 frames into 100
+            #   - Trim-to-fill 50 frames into 100
+            #   - Trim-to-fill 33 frames into 100
+            #   - Trim-to-fill 5 frames into 100
+            #   - Trim-to-fill 100 frames into 99
+            #   - Trim-to-fill 100 frames into 50
+            #   - Trim-to-fill 100 frames into 33
+            #   - Trim-to-fill 100 frames into 10
+            #   - Trim-to-fill 100 frames into 9
+            0.99,
+            0.90,
+            0.50,
+            0.33,
+            0.05,
+            1.01,
+            2.0,
+            3.03,
+            10.0,
+            11.11,
+            # - Backwards time warps
+            #   - Reverse 100%
+            #   - Reverse 50%
+            #   - Reverse 200%
+            #   - Reverse 30%
+            #   - Reverse 120%
+            -1.0,
+            -0.50,
+            -2.0,
+            -0.30,
+            -1.2
+        ]
+        actual = [
+            round(clip.effects[0].time_scalar, 2)
+            if len(clip.effects) > 0
+            else None
+            for clip in clips
         ]
         self.assertEqual(expected, actual)
 
