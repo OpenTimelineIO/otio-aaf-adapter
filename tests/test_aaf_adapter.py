@@ -101,7 +101,7 @@ LINEAR_SPEED_EFFECTS_EXAMPLE_PATH = os.path.join(
     SAMPLE_DATA_DIR,
     "linear_speed_effects.aaf"
 )
-TIMCODE_EXAMPLE_PATH = os.path.join(
+TIMECODE_EXAMPLE_PATH = os.path.join(
     SAMPLE_DATA_DIR,
     "timecode_test.aaf"
 )
@@ -591,7 +591,7 @@ class AAFReaderTests(unittest.TestCase):
         )
 
     def test_timecode(self):
-        aaf_path = TIMCODE_EXAMPLE_PATH
+        aaf_path = TIMECODE_EXAMPLE_PATH
         timeline = otio.adapters.read_from_file(aaf_path)
         self.assertNotEqual(
             timeline.tracks[0][0].source_range.start_time,
