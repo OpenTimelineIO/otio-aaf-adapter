@@ -1641,8 +1641,6 @@ def read_from_file(
 def write_to_file(
     input_otio,
     filepath,
-    # lofting these options out of the aaf writer to make them visible in the
-    # `otiopluginfo` output.
     prefer_file_mob_id=False,
     use_empty_mob_ids=False,
     **kwargs
