@@ -1008,13 +1008,43 @@ def _transcribe_linear_timewarp(item, parameters):
     # this is a linear time warp
     effect = otio.schema.LinearTimeWarp()
 
-    offset_map = _get_parameter(item, 'PARAM_SPEED_OFFSET_MAP_U')
+    # we expect all effects passed in to have a SpeedRatio
+    ratio = parameters.get("SpeedRatio")
 
-    # If we have a LinearInterp with just 2 control points, then
+    # There may also be keyframes on the speed graph or position graph.
+    # Time warps with speed graph keyframes have these:
+    #   ConstantValue:
+    #     SpeedRatio
+    #     AvidMotionPulldown
+    #     AvidMotionInputFormat
+    #     AvidMotionOutputFormat
+    #   VaryingValue:
+    #     PARAM_SPEED_MAP_U
+    #     PARAM_SPEED_OFFSET_MAP_U
+    # Time warps with position graph keyframes have these:
+    #   ConstantValue:
+    #     SpeedRatio
+    #     AvidMotionPulldown
+    #     AvidPhase
+    #     AvidMotionInputFormat
+    #     AvidMotionOutputFormat
+    #   VaryingValue:
+    #     PARAM_OFFSET_MAP_U
+    # Do any time warps *not* have SpeedRatio?
+    speed_offset_map = _get_parameter(item, 'PARAM_SPEED_OFFSET_MAP_U')
+    # speed_map = _get_parameter(item, 'PARAM_SPEED_MAP_U')
+    # offset_map = _get_parameter(item, 'PARAM_OFFSET_MAP_U')
+    # TODO: We should also check the PARAM_OFFSET_MAP_U which has
+    # an interpolation_def().name as well.
+
+    # If we have just 2 control points, then
     # we can compute the time_scalar. Note that the SpeedRatio is
     # NOT correct in many AAFs - we aren't sure why, but luckily we
     # can compute the correct value this way.
-    points = offset_map.get("PointList")
+    # Note: that this code ignores the interpolation type which is often
+    # set to "Cubic" even when the curve is linear.
+    # interpolation = speed_offset_map.interpolation.name if speed_offset_map else None
+    points = speed_offset_map.get("PointList") if speed_offset_map else []
     if len(points) > 2:
         # This is something complicated... try the fancy version
         return _transcribe_fancy_timewarp(item, parameters)
@@ -1052,7 +1082,7 @@ def _transcribe_fancy_timewarp(item, parameters):
 
     # For now, this is an unsupported time effect...
     effect = otio.schema.TimeEffect()
-    effect.effect_name = ""
+    effect.effect_name = "Unknown Time Warp Effect"
     effect.name = item.get("Name", "")
 
     return effect
@@ -1113,15 +1143,9 @@ def _transcribe_operation_group(item, parents, metadata, edit_rate, indent):
     if operation.get("IsTimeWarp"):
         if operation.get("Name") == "Motion Control":
 
-            offset_map = _get_parameter(item, 'PARAM_SPEED_OFFSET_MAP_U')
-            # TODO: We should also check the PARAM_OFFSET_MAP_U which has
-            # an interpolation_def().name as well.
-            if offset_map is not None:
-                interpolation = offset_map.interpolation.name
-            else:
-                interpolation = None
-
-            if interpolation == "LinearInterp":
+            # if the effect has a SpeedRatio, we assume it's a linear time warp
+            speed_ratio = _get_parameter(item, 'SpeedRatio')
+            if speed_ratio is not None:
                 effect = _transcribe_linear_timewarp(item, parameters)
             else:
                 effect = _transcribe_fancy_timewarp(item, parameters)
