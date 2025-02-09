@@ -686,7 +686,7 @@ def _transcribe(item, parents, edit_rate, indent=0):
 
             event_mob = event_mobs[-1]
 
-            metadata["AttachedSlotID"] = int(metadata["DescribedSlots"][0])
+            metadata["AttachedSlotIds"] = [int(x) for x in metadata["DescribedSlots"]]
             metadata["AttachedPhysicalTrackNumber"] = int(
                 event_mob["PhysicalTrackNumber"].value
             )
@@ -1248,7 +1248,6 @@ def _attach_markers(collection):
             track_number = metadata.get("PhysicalTrackNumber")
             if slot_id is None or track_number is None:
                 continue
-
             tracks_map[(int(slot_id), int(track_number))] = track
 
         # iterate all tracks for their markers and attach them to the matching item
@@ -1256,9 +1255,14 @@ def _attach_markers(collection):
                 descended_from_type=otio.schema.Track):
             for marker in list(current_track.markers):
                 metadata = marker.metadata.get("AAF", {})
-                slot_id = metadata.get("AttachedSlotID")
+                attached_slot_ids = metadata.get("AttachedSlotIds", [])
+
                 track_number = metadata.get("AttachedPhysicalTrackNumber")
-                target_track = tracks_map.get((slot_id, track_number))
+                target_track = None
+                for slot_id in attached_slot_ids:
+                    target_track = tracks_map.get((slot_id, track_number))
+                    if target_track:
+                        break
 
                 # remove marker from current parent track
                 current_track.markers.remove(marker)
