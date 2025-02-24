@@ -693,19 +693,40 @@ class VideoTrackTranscriber(_TrackTranscriber):
         return timeline_mobslot, sequence
 
     def default_descriptor(self, otio_clip):
-        descriptor = self.aaf_file.create.CDCIDescriptor()
         descriptor_dict = otio_clip.media_reference.metadata.get("AAF", {}).get(
             "EssenceDescription", {})
+
+        descriptor_class = descriptor_dict.get("ClassName")
+        if descriptor_class:
+            descriptor = getattr(self.aaf_file.create, descriptor_class)()
+        else:
+            descriptor = self.aaf_file.create.CDCIDescriptor()
+            descriptor_class = "CDCIDescriptor"
 
         video_linemap = descriptor_dict.get("VideoLineMap", [42, 0])
         video_linemap = [int(x) for x in video_linemap]
 
-        descriptor["ComponentWidth"].value = int(
-            descriptor_dict.get("ComponentWidth", 8)
-        )
-        descriptor["HorizontalSubsampling"].value = int(
-            descriptor_dict.get("HorizontalSubsampling", 2)
-        )
+        if descriptor_class == "CDCIDescriptor":
+            descriptor["ComponentWidth"].value = int(
+                descriptor_dict.get("ComponentWidth", 8)
+            )
+            descriptor["HorizontalSubsampling"].value = int(
+                descriptor_dict.get("HorizontalSubsampling", 2)
+            )
+        elif descriptor_class == "RGBADescriptor":
+            # This is a hack for aaf2's inability of dealing with
+            # empty pixel layout list that OTIO has
+            default_pixel_layout = [
+                {'Code': 'CompRed', 'Size': 8},
+                {'Code': 'CompGreen', 'Size': 8},
+                {'Code': 'CompBlue', 'Size': 8}
+            ]
+            pixel_layout = descriptor_dict.get("PixelLayout", default_pixel_layout)
+            if (len(pixel_layout) == 0):
+                pixel_layout = default_pixel_layout
+
+            descriptor["PixelLayout"].value = pixel_layout
+
         descriptor["ImageAspectRatio"].value = descriptor_dict.get(
             "ImageAspectRatio", "16/9"
         )
@@ -720,7 +741,10 @@ class VideoTrackTranscriber(_TrackTranscriber):
         )
         descriptor["VideoLineMap"].value = video_linemap
 
-        descriptor["SampleRate"].value = int(descriptor_dict.get("SampleRate", 24))
+        # aaf2 Rational follows python's fractions logic,
+        # thus able to construct from anything
+        descriptor["SampleRate"].value = str(aaf2.rational.AAFRational(
+            descriptor_dict.get("SampleRate", 24)))
         descriptor["Length"].value = int(descriptor_dict.get("Length", 1))
 
         media = otio_clip.media_reference
@@ -733,7 +757,27 @@ class VideoTrackTranscriber(_TrackTranscriber):
                 descriptor["Length"].value = int(media.available_range.duration.value)
 
         for key, value in descriptor_dict.items():
-            descriptor[key].value = value
+            # ClassName is not an AAF property
+            if key == "ClassName":
+                continue
+
+            # Don't overwrite already set properties
+            if key in descriptor:
+                continue
+
+            try:
+                key_typedef = descriptor[key].typedef
+                key_native_type = self.aaf_file.metadict.lookup_class(
+                    key_typedef.class_id)
+
+                if key_native_type is aaf2.types.TypeDefRecord \
+                        and key_typedef.type_name == 'AUID':
+                    key_native_value = aaf2.types.AUID(value)
+                    descriptor[key].value = key_native_value
+                else:
+                    descriptor[key].value = value
+            except KeyError as e:
+                logger.warning(f'Translation of \"{key}\" is impossible: {e}')
 
         return descriptor
 
@@ -871,7 +915,8 @@ class AudioTrackTranscriber(_TrackTranscriber):
         descriptor_dict = otio_clip.media_reference.metadata.get("AAF", {}).get(
             "EssenceDescription", {})
 
-        sample_rate = int(descriptor_dict.get("SampleRate", 48000))
+        sample_rate = float(aaf2.rational.AAFRational(
+            descriptor_dict.get("SampleRate", 48000)))
         descriptor_dict["AverageBPS"] = int(descriptor_dict.get("AverageBPS", 96000))
         descriptor_dict["BlockAlign"] = int(descriptor_dict.get("BlockAlign", 2))
         descriptor_dict["QuantizationBits"] = int(
@@ -882,8 +927,8 @@ class AudioTrackTranscriber(_TrackTranscriber):
             locator = self.aaf_network_locator(otio_clip.media_reference)
             descriptor["Locator"].append(locator)
 
-        descriptor_dict["AudioSamplingRate"] = int(
-            descriptor_dict.get("AudioSamplingRate", 48000)
+        descriptor_dict["AudioSamplingRate"] = float(aaf2.rational.AAFRational(
+            descriptor_dict.get("AudioSamplingRate", 48000))
         )
         descriptor_dict["Channels"] = int(descriptor_dict.get("Channels", 1))
         descriptor_dict["SampleRate"] = sample_rate
@@ -893,7 +938,26 @@ class AudioTrackTranscriber(_TrackTranscriber):
         )))
 
         for key, value in descriptor_dict.items():
-            descriptor[key].value = value
+            # ClassName is not an AAF property
+            if key == "ClassName":
+                continue
+            # Don't overwrite already set properties
+            if key in descriptor:
+                continue
+
+            try:
+                key_typedef = descriptor[key].typedef
+                key_native_type = self.aaf_file.metadict.lookup_class(
+                    key_typedef.class_id)
+
+                if key_native_type is aaf2.types.TypeDefRecord \
+                        and key_typedef.type_name == 'AUID':
+                    key_native_value = aaf2.types.AUID(value)
+                    descriptor[key].value = key_native_value
+                else:
+                    descriptor[key].value = value
+            except KeyError as e:
+                logger.warning(f'Translation of \"{key}\" is impossible: {e}')
 
         return descriptor
 
