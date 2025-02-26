@@ -1050,11 +1050,9 @@ def _transcribe_linear_timewarp(item, parameters):
         return _transcribe_fancy_timewarp(item, parameters)
     elif (
         len(points) == 2
-        and float(points[0].time) == 0
-        and float(points[0].value) == 0
     ):
         # With just two points, we can compute the slope
-        effect.time_scalar = float(points[1].value) / float(points[1].time)
+        effect.time_scalar = float(points[1].value - points[0].value) / float(points[1].time - points[0].time)
     else:
         # Fall back to the SpeedRatio if we didn't understand the points
         ratio = parameters.get("SpeedRatio")
