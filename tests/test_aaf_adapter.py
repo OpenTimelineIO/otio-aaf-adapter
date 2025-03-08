@@ -797,9 +797,14 @@ class AAFReaderTests(unittest.TestCase):
         video_tracks = timeline.video_tracks()
         self.assertEqual(1, len(video_tracks))
         track = video_tracks[0]
-        # self.assertEqual(77, len(track))  # clips + gaps
+        self.assertEqual(145, len(track))  # clips + gaps
         clips = list(track.find_clips())
-        # self.assertEqual(41, len(clips))  # just clips
+        self.assertEqual(75, len(clips))  # just clips
+
+        # This test only verifies the first 41 clips, not the whole
+        # timeline. Someday later we can add more tests to verify the
+        # rest of the timeline which includes trimmed time warps.
+        clips = clips[:41]
 
         expected = [
             # - Full clip (no effects)
@@ -912,7 +917,7 @@ class AAFReaderTests(unittest.TestCase):
             else None
             for clip in clips
         ]
-        self.assertEqual(expected[:41], actual[:41])
+        self.assertEqual(expected, actual)
 
     def test_read_misc_speed_effects(self):
         timeline = otio.adapters.read_from_file(
