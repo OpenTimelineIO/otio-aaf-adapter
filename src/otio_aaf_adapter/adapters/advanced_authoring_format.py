@@ -1642,7 +1642,13 @@ def read_from_file(
     return result
 
 
-def write_to_file(input_otio, filepath, **kwargs):
+def write_to_file(
+    input_otio,
+    filepath,
+    prefer_file_mob_id=False,
+    use_empty_mob_ids=False,
+    **kwargs
+):
 
     with aaf2.open(filepath, "w") as f:
 
@@ -1650,7 +1656,13 @@ def write_to_file(input_otio, filepath, **kwargs):
 
         aaf_writer.validate_metadata(timeline)
 
-        otio2aaf = aaf_writer.AAFFileTranscriber(timeline, f, **kwargs)
+        otio2aaf = aaf_writer.AAFFileTranscriber(
+            timeline,
+            f,
+            prefer_file_mob_id=prefer_file_mob_id,
+            use_empty_mob_ids=use_empty_mob_ids,
+            **kwargs
+        )
 
         if not isinstance(timeline, otio.schema.Timeline):
             raise otio.exceptions.NotSupportedError(

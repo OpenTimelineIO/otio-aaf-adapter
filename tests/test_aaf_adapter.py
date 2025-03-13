@@ -1906,13 +1906,37 @@ class AAFWriterTests(unittest.TestCase):
             self.assertEqual(dict(master_mob.comments.items()), expected_comments)
             self.assertEqual(dict(comp_mob.comments.items()), expected_comments)
 
+    def test_aaf_writer_metadata_roundtrip(self):
+        """Tries to roundtrip metadata through AAF and `MobAttributeList`."""
+        og_aaf_tl = otio.adapters.read_from_file(ONE_AUDIO_CLIP_PATH)
+        clip = og_aaf_tl.find_clips()[0]
+
+        # change a value to test roundtrip
+        clip.media_reference.metadata["AAF"]["MobAttributeList"]["_USER_POS"] = 2
+        _, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
+        otio.adapters.write_to_file(og_aaf_tl, tmp_aaf_path)
+
+        roundtripped_tl = otio.adapters.read_from_file(tmp_aaf_path)
+
+        clip = roundtripped_tl.find_clips()[0]
+        expected = {
+            "_IMPORTSETTING": "__AttributeList",
+            "_SAVED_AAF_AUDIO_LENGTH": 0,
+            "_SAVED_AAF_AUDIO_RATE_DEN": 1,
+            "_SAVED_AAF_AUDIO_RATE_NUM": 24,
+            "_USER_POS": 2,
+            "_VERSION": 2
+        }
+        self.assertEqual(clip.media_reference.metadata["AAF"]["MobAttributeList"],
+                         expected)
+
     def test_aaf_writer_global_start_time(self):
-        for tc, rate in [("01:00:00:00", 23.97),
+        for tc, rate in [("01:00:00:00", 24000 / 1001),
                          ("01:00:00:00", 24),
                          ("01:00:00:00", 25),
-                         ("01:00:00:00", 29.97),
+                         ("01:00:00:00", 30000 / 1001),
                          ("01:00:00:00", 30),
-                         ("01:00:00:00", 59.94),
+                         ("01:00:00:00", 60000 / 1001),
                          ("01:00:00:00", 60)]:
 
             otio_timeline = otio.schema.Timeline()
@@ -1936,6 +1960,108 @@ class AAFWriterTests(unittest.TestCase):
             otio.adapters.write_to_file(otio_timeline, tmp_aaf_path)
 
             self._verify_aaf(tmp_aaf_path)
+
+    def test_aaf_writer_audio_pan(self):
+        """Test Clip with custom audio pan values"""
+        tl = otio.schema.Timeline()
+
+        # Add an audio clip with pan metadata
+        clip = otio.schema.Clip(
+            name="Panned Audio Clip",
+            metadata={},
+            source_range=otio.opentime.TimeRange(
+                start_time=otio.opentime.RationalTime(0, 24),
+                duration=otio.opentime.RationalTime(100, 24),
+            )
+        )
+        clip.media_reference = otio.schema.MissingReference(
+            available_range=otio.opentime.TimeRange(
+                start_time=otio.opentime.RationalTime(0, 24),
+                duration=otio.opentime.RationalTime(100, 24),
+            ))
+
+        # Add pan metadata
+        clip.metadata["AAF"] = {
+            "Pan": {
+                "ControlPoints": [
+                    {
+                        "ControlPointSource": 2,
+                        "Time": "0",
+                        "Value": "0",
+                    },
+                    {
+                        "ControlPointSource": 2,
+                        "Time": "100",
+                        "Value": "1",
+                    }
+                ]
+            },
+            "SourceID": "urn:smpte:umid:060a2b34.01010101.01010f00."
+                        "13000000.060e2b34.7f7f2a80.5c9e6a3b.ace913a2"
+        }
+
+        tl.tracks.append(
+            otio.schema.Track(children=[clip], kind=otio.schema.TrackKind.Audio)
+        )
+
+        _, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
+        otio.adapters.write_to_file(tl, tmp_aaf_path)
+        print(tmp_aaf_path)
+
+        # verify pan values in AAF file
+        with aaf2.open(tmp_aaf_path) as aaf_file:
+            mob = next(aaf_file.content.compositionmobs())
+            slot = mob.slots[0]
+            parameter = list(slot.segment.parameters)[0]
+
+            # extract the pan values
+            param_dicts = [
+                {k: v.value for k, v in dict(p).items()}
+                for p in parameter.pointlist
+            ]
+
+            expected = [
+                {'ControlPointSource': 2,
+                 'Time': aaf2.rational.AAFRational(0, 1),
+                 'Value': aaf2.rational.AAFRational(0, 1)},
+                {'ControlPointSource': 2,
+                 'Time': aaf2.rational.AAFRational(100, 1),
+                 'Value': aaf2.rational.AAFRational(1, 1)}
+            ]
+
+            self.assertEqual(param_dicts, expected)
+
+    def test_essence_descriptor(self):
+        """Tests custom values for essence descriptor
+        """
+        tl = otio.schema.Timeline()
+        range = otio.opentime.TimeRange(
+            start_time=otio.opentime.RationalTime(0, 24),
+            duration=otio.opentime.RationalTime(100, 24),
+        )
+        clip = otio.schema.Clip(source_range=range)
+        clip.media_reference = otio.schema.MissingReference(available_range=range)
+        tl.tracks.append(otio.schema.Track())
+        tl.tracks[0].append(clip)
+
+        # set custom essence descriptor values
+        clip.media_reference.metadata["AAF"] = {
+            "SourceID": str(MobID(int=13)),
+            "EssenceDescription": {
+                "SampleRate": 48,
+                "Length": 100
+            }
+        }
+
+        # write to temp AAf file
+        _, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
+        otio.adapters.write_to_file(tl, tmp_aaf_path)
+
+        # check if essence descriptor parameters in AAF file match
+        with aaf2.open(tmp_aaf_path) as aaf_file:
+            source_mob = list(aaf_file.content.sourcemobs())[1]
+            self.assertEqual(source_mob.descriptor['Length'].value, 100)
+            self.assertEqual(source_mob.descriptor['SampleRate'].value, 48)
 
     def _verify_aaf(self, aaf_path):
         otio_timeline = otio.adapters.read_from_file(aaf_path, simplify=True)

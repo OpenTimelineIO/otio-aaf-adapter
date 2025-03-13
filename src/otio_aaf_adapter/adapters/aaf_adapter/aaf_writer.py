@@ -121,6 +121,7 @@ class AAFFileTranscriber:
 
         # transcribe timeline comments onto composition mob
         self._transcribe_user_comments(input_otio, self.compositionmob)
+        self._transcribe_mob_attributes(input_otio, self.compositionmob)
 
     def _unique_mastermob(self, otio_clip):
         """Get a unique mastermob, identified by clip metadata mob id."""
@@ -133,12 +134,14 @@ class AAFFileTranscriber:
             self.aaf_file.content.mobs.append(mastermob)
             self._unique_mastermobs[mob_id] = mastermob
 
-            # transcribe clip comments onto master mob
+            # transcribe clip comments / mob attributes onto master mob
             self._transcribe_user_comments(otio_clip, mastermob)
+            self._transcribe_mob_attributes(otio_clip, mastermob)
 
-            # transcribe media reference comments onto master mob.
-            # this might overwrite clip comments.
+            # transcribe media reference comments / mob attributes onto master mob.
+            # this might overwrite clip comments / attributes.
             self._transcribe_user_comments(otio_clip.media_reference, mastermob)
+            self._transcribe_mob_attributes(otio_clip.media_reference, mastermob)
 
         return mastermob
 
@@ -232,6 +235,22 @@ class AAFFileTranscriber:
                     f"Skip transcribing unsupported comment value of type "
                     f"'{type(val)}' for key '{key}'."
                 )
+
+    def _transcribe_mob_attributes(self, otio_item, target_mob):
+        """Transcribes mob attribute list onto the `target_mob`.
+        This can be used to roundtrip specific mob config values, like audio channel
+        settings.
+        """
+        mob_attr_map = otio_item.metadata.get("AAF", {}).get("MobAttributeList", {})
+        mob_attr_list = aaf2.misc.TaggedValueHelper(target_mob['MobAttributeList'])
+        for key, val in mob_attr_map.items():
+            if isinstance(val, (int, str)):
+                mob_attr_list[key] = val
+            elif isinstance(val, (float, Rational)):
+                mob_attr_list[key] = aaf2.rational.AAFRational(val)
+            else:
+                raise ValueError(f"Unsupported mob attribute type '{type(val)}' for "
+                                 f"key '{key}'.")
 
 
 def validate_metadata(timeline):
@@ -838,18 +857,35 @@ class VideoTrackTranscriber(_TrackTranscriber):
         return timeline_mobslot, sequence
 
     def default_descriptor(self, otio_clip):
-        # TODO: Determine if these values are the correct, and if so,
-        # maybe they should be in the AAF metadata
         descriptor = self.aaf_file.create.CDCIDescriptor()
-        descriptor["ComponentWidth"].value = 8
-        descriptor["HorizontalSubsampling"].value = 2
-        descriptor["ImageAspectRatio"].value = "16/9"
-        descriptor["StoredWidth"].value = 1920
-        descriptor["StoredHeight"].value = 1080
-        descriptor["FrameLayout"].value = "FullFrame"
-        descriptor["VideoLineMap"].value = [42, 0]
-        descriptor["SampleRate"].value = 24
-        descriptor["Length"].value = 1
+        descriptor_dict = otio_clip.media_reference.metadata.get("AAF", {}).get(
+            "EssenceDescription", {})
+
+        video_linemap = descriptor_dict.get("VideoLineMap", [42, 0])
+        video_linemap = [int(x) for x in video_linemap]
+
+        descriptor["ComponentWidth"].value = int(
+            descriptor_dict.get("ComponentWidth", 8)
+        )
+        descriptor["HorizontalSubsampling"].value = int(
+            descriptor_dict.get("HorizontalSubsampling", 2)
+        )
+        descriptor["ImageAspectRatio"].value = descriptor_dict.get(
+            "ImageAspectRatio", "16/9"
+        )
+        descriptor["StoredWidth"].value = int(
+            descriptor_dict.get("StoredWidth", 1920)
+        )
+        descriptor["StoredHeight"].value = int(
+            descriptor_dict.get("StoredHeight", 1080)
+        )
+        descriptor["FrameLayout"].value = descriptor_dict.get(
+            "FrameLayout", "FullFrame"
+        )
+        descriptor["VideoLineMap"].value = video_linemap
+
+        descriptor["SampleRate"].value = int(descriptor_dict.get("SampleRate", 24))
+        descriptor["Length"].value = int(descriptor_dict.get("Length", 1))
 
         media = otio_clip.media_reference
         if isinstance(media, otio.schema.ExternalReference):
@@ -859,6 +895,9 @@ class VideoTrackTranscriber(_TrackTranscriber):
             if media.available_range:
                 descriptor['SampleRate'].value = media.available_range.duration.rate
                 descriptor["Length"].value = int(media.available_range.duration.value)
+
+        for key, value in descriptor_dict.items():
+            descriptor[key].value = value
 
         return descriptor
 
@@ -934,20 +973,37 @@ class AudioTrackTranscriber(_TrackTranscriber):
                                                            "LinearInterp",
                                                            "LinearInterp")
         self.aaf_file.dictionary.register_def(interp_def)
-        # PointList
-        length = int(otio_clip.duration().value)
-        c1 = self.aaf_file.create.ControlPoint()
-        c1["ControlPointSource"].value = 2
-        c1["Time"].value = aaf2.rational.AAFRational(f"0/{length}")
-        c1["Value"].value = 0
-        c2 = self.aaf_file.create.ControlPoint()
-        c2["ControlPointSource"].value = 2
-        c2["Time"].value = aaf2.rational.AAFRational(f"{length - 1}/{length}")
-        c2["Value"].value = 0
+
+        # generate PointList for pan
         varying_value = self.aaf_file.create.VaryingValue()
         varying_value.parameterdef = param_def
         varying_value["Interpolation"].value = interp_def
-        varying_value["PointList"].extend([c1, c2])
+
+        length = int(otio_clip.duration().value)
+
+        # default pan points are mid pan
+        default_points = [
+            {
+                "ControlPointSource": 2,
+                "Time": f"0/{length}",
+                "Value": "1/2",
+            },
+            {
+                "ControlPointSource": 2,
+                "Time": f"{length - 1}/{length}",
+                "Value": "1/2",
+            }
+        ]
+        cp_dict_list = otio_clip.metadata.get("AAF", {}).get("Pan", {}).get(
+            "ControlPoints", default_points)
+
+        for cp_dict in cp_dict_list:
+            point = self.aaf_file.create.ControlPoint()
+            point["Time"].value = aaf2.rational.AAFRational(cp_dict["Time"])
+            point["Value"].value = aaf2.rational.AAFRational(cp_dict["Value"])
+            point["ControlPointSource"].value = cp_dict["ControlPointSource"]
+            varying_value["PointList"].append(point)
+
         opgroup = self.timeline_mobslot.segment
         opgroup.parameters.append(varying_value)
 
@@ -984,19 +1040,32 @@ class AudioTrackTranscriber(_TrackTranscriber):
 
     def default_descriptor(self, otio_clip):
         descriptor = self.aaf_file.create.PCMDescriptor()
-        descriptor["AverageBPS"].value = 96000
-        descriptor["BlockAlign"].value = 2
-        descriptor["QuantizationBits"].value = 16
-        descriptor["AudioSamplingRate"].value = 48000
-        descriptor["Channels"].value = 1
-        descriptor["SampleRate"].value = 48000
-        descriptor["Length"].value = int(
-            otio_clip.media_reference.available_range.duration.value
+        descriptor_dict = otio_clip.media_reference.metadata.get("AAF", {}).get(
+            "EssenceDescription", {})
+
+        sample_rate = int(descriptor_dict.get("SampleRate", 48000))
+        descriptor_dict["AverageBPS"] = int(descriptor_dict.get("AverageBPS", 96000))
+        descriptor_dict["BlockAlign"] = int(descriptor_dict.get("BlockAlign", 2))
+        descriptor_dict["QuantizationBits"] = int(
+            descriptor_dict.get("QuantizationBits", 16)
         )
 
         if isinstance(otio_clip.media_reference, otio.schema.ExternalReference):
             locator = self.aaf_network_locator(otio_clip.media_reference)
             descriptor["Locator"].append(locator)
+
+        descriptor_dict["AudioSamplingRate"] = int(
+            descriptor_dict.get("AudioSamplingRate", 48000)
+        )
+        descriptor_dict["Channels"] = int(descriptor_dict.get("Channels", 1))
+        descriptor_dict["SampleRate"] = sample_rate
+        descriptor_dict["Length"] = int(descriptor_dict.get("Length", int(
+            otio_clip.media_reference.available_range.duration.rescaled_to(
+                sample_rate).value
+        )))
+
+        for key, value in descriptor_dict.items():
+            descriptor[key].value = value
 
         return descriptor
 
