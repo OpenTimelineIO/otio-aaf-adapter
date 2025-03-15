@@ -2063,6 +2063,109 @@ class AAFWriterTests(unittest.TestCase):
             self.assertEqual(source_mob.descriptor['Length'].value, 100)
             self.assertEqual(source_mob.descriptor['SampleRate'].value, 48)
 
+    def test_aaf_writer_cdci_descriptor(self):
+        """Tests that CDCI descriptor is properly transcribed"""
+        tl = otio.schema.Timeline()
+        range = otio.opentime.TimeRange(
+            start_time=otio.opentime.RationalTime(0, 24),
+            duration=otio.opentime.RationalTime(100, 24),
+        )
+        clip = otio.schema.Clip(source_range=range)
+        clip.media_reference = otio.schema.MissingReference(available_range=range)
+        tl.tracks.append(otio.schema.Track())
+        tl.tracks[0].append(clip)
+
+        # set custom essence descriptor values
+        clip.media_reference.metadata["AAF"] = {
+            "SourceID": str(MobID(int=13)),
+            "EssenceDescription": {
+                "ClassName": "CDCIDescriptor",
+            },
+        }
+
+        # write to temp AAf file
+        _, tmp_aaf_path = tempfile.mkstemp(suffix=".aaf")
+        otio.adapters.write_to_file(tl, tmp_aaf_path)
+
+        # check if essence descriptor parameters in AAF file match
+        with aaf2.open(tmp_aaf_path) as aaf_file:
+            source_mob = list(aaf_file.content.sourcemobs())[1]
+            self.assertIsInstance(source_mob.descriptor, aaf2.essence.CDCIDescriptor)
+
+    def test_aaf_writer_rgba_descriptor(self):
+        """Tests that RGBA descriptor is properly transcribed"""
+        tl = otio.schema.Timeline()
+        range = otio.opentime.TimeRange(
+            start_time=otio.opentime.RationalTime(0, 24),
+            duration=otio.opentime.RationalTime(100, 24),
+        )
+        clip = otio.schema.Clip(source_range=range)
+        clip.media_reference = otio.schema.MissingReference(available_range=range)
+        tl.tracks.append(otio.schema.Track())
+        tl.tracks[0].append(clip)
+
+        # set custom essence descriptor values
+        clip.media_reference.metadata["AAF"] = {
+            "SourceID": str(MobID(int=13)),
+            "EssenceDescription": {
+                "ClassName": "RGBADescriptor",
+            },
+        }
+
+        # write to temp AAf file
+        _, tmp_aaf_path = tempfile.mkstemp(suffix=".aaf")
+        otio.adapters.write_to_file(tl, tmp_aaf_path)
+
+        # check if essence descriptor parameters in AAF file match
+        with aaf2.open(tmp_aaf_path) as aaf_file:
+            source_mob = list(aaf_file.content.sourcemobs())[1]
+            self.assertIsInstance(source_mob.descriptor, aaf2.essence.RGBADescriptor)
+
+    def test_aaf_writer_rgba_descriptor_with_empty_pixel_layout(self):
+        """Tests that RGBA descriptor with empty pixel layout is properly transcribed
+        to a default value of RGB8.
+        """
+        tl = otio.schema.Timeline()
+        range = otio.opentime.TimeRange(
+            start_time=otio.opentime.RationalTime(0, 24),
+            duration=otio.opentime.RationalTime(100, 24),
+        )
+        clip = otio.schema.Clip(source_range=range)
+        clip.media_reference = otio.schema.MissingReference(available_range=range)
+        tl.tracks.append(otio.schema.Track())
+        tl.tracks[0].append(clip)
+
+        # set custom essence descriptor values
+        clip.media_reference.metadata["AAF"] = {
+            "SourceID": str(MobID(int=13)),
+            "EssenceDescription": {
+                "ClassName": "RGBADescriptor",
+                "PixelLayout": {},
+            },
+        }
+
+        # write to temp AAf file
+        _, tmp_aaf_path = tempfile.mkstemp(suffix=".aaf")
+        otio.adapters.write_to_file(tl, tmp_aaf_path)
+
+        # check if essence descriptor parameters in AAF file match
+        with aaf2.open(tmp_aaf_path) as aaf_file:
+            source_mob = list(aaf_file.content.sourcemobs())[1]
+            self.assertIsInstance(source_mob.descriptor, aaf2.essence.RGBADescriptor)
+
+            pixel_layout = source_mob.descriptor["PixelLayout"]
+            rgb8_pixel_layout = [
+                {"Code": "CompRed", "Size": 8},
+                {"Code": "CompGreen", "Size": 8},
+                {"Code": "CompBlue", "Size": 8},
+                {"Code": "CompNull", "Size": 0},
+                {"Code": "CompNull", "Size": 0},
+                {"Code": "CompNull", "Size": 0},
+                {"Code": "CompNull", "Size": 0},
+                {"Code": "CompNull", "Size": 0},
+            ]
+            self.assertListEqual(pixel_layout.value, rgb8_pixel_layout)
+
     def _verify_aaf(self, aaf_path):
         otio_timeline = otio.adapters.read_from_file(aaf_path, simplify=True)
         fd, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')

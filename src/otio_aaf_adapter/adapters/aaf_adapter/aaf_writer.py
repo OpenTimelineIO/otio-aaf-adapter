@@ -16,6 +16,8 @@ import copy
 import re
 import logging
 
+from typing import Dict, Any
+
 
 AAF_PARAMETERDEF_PAN = aaf2.auid.AUID("e4962322-2267-11d3-8a4c-0050040ef7d2")
 AAF_OPERATIONDEF_MONOAUDIOPAN = aaf2.auid.AUID("9d2ea893-0968-11d3-8a38-0050040ef7d2")
@@ -619,6 +621,50 @@ class _TrackTranscriber:
             otio_clip.media_reference.available_range.duration.value)
         return tapemob, tapemob_slot
 
+    def transcribe_otio_aaf_descriptor(
+        self,
+        descriptor: aaf2.essence.FileDescriptor,
+        otio_aaf_descriptor: Dict[str, Any],
+    ) -> aaf2.essence.FileDescriptor:
+        """
+        Transcribe the properties of AAF descriptor if the are not yet mapped.
+
+        Args:
+            descriptor (_type_): AAF descriptor to be transcribed.
+            otio_aaf_descriptor (_type_): OTIO representation of the descriptor.
+
+        Returns:
+            descriptor: The default-transcribed AAF descriptor extended with
+            the properties from otio_aaf_descriptor.
+        """
+        for key, value in otio_aaf_descriptor.items():
+            # ClassName is not an AAF property
+            if key == "ClassName":
+                continue
+
+            # Don't overwrite already set properties
+            if key in descriptor:
+                continue
+
+            try:
+                key_typedef = descriptor[key].typedef
+                key_native_type = self.aaf_file.metadict.lookup_class(
+                    key_typedef.class_id
+                )
+
+                if (
+                    key_native_type is aaf2.types.TypeDefRecord
+                    and key_typedef.type_name == "AUID"
+                ):
+                    key_native_value = aaf2.types.AUID(value)
+                    descriptor[key].value = key_native_value
+                else:
+                    descriptor[key].value = value
+            except KeyError as e:
+                logger.warning(f'Translation of "{key}" is impossible: {e}')
+
+        return descriptor
+
     def _create_filemob(self, otio_clip, tapemob, tapemob_slot):
         """
         Return a file sourcemob for an otio Clip. Needs a tapemob and tapemob slot.
@@ -706,14 +752,14 @@ class VideoTrackTranscriber(_TrackTranscriber):
         video_linemap = descriptor_dict.get("VideoLineMap", [42, 0])
         video_linemap = [int(x) for x in video_linemap]
 
-        if descriptor_class == "CDCIDescriptor":
+        if isinstance(descriptor, aaf2.essence.CDCIDescriptor):
             descriptor["ComponentWidth"].value = int(
                 descriptor_dict.get("ComponentWidth", 8)
             )
             descriptor["HorizontalSubsampling"].value = int(
                 descriptor_dict.get("HorizontalSubsampling", 2)
             )
-        elif descriptor_class == "RGBADescriptor":
+        elif isinstance(descriptor, aaf2.essence.RGBADescriptor):
             # This is a hack for aaf2's inability of dealing with
             # empty pixel layout list that OTIO has
             default_pixel_layout = [
@@ -756,28 +802,8 @@ class VideoTrackTranscriber(_TrackTranscriber):
                 descriptor['SampleRate'].value = media.available_range.duration.rate
                 descriptor["Length"].value = int(media.available_range.duration.value)
 
-        for key, value in descriptor_dict.items():
-            # ClassName is not an AAF property
-            if key == "ClassName":
-                continue
-
-            # Don't overwrite already set properties
-            if key in descriptor:
-                continue
-
-            try:
-                key_typedef = descriptor[key].typedef
-                key_native_type = self.aaf_file.metadict.lookup_class(
-                    key_typedef.class_id)
-
-                if key_native_type is aaf2.types.TypeDefRecord \
-                        and key_typedef.type_name == 'AUID':
-                    key_native_value = aaf2.types.AUID(value)
-                    descriptor[key].value = key_native_value
-                else:
-                    descriptor[key].value = value
-            except KeyError as e:
-                logger.warning(f'Translation of \"{key}\" is impossible: {e}')
+        # Finalize the descriptor with the rest of the properties
+        descriptor = self.transcribe_otio_aaf_descriptor(descriptor, descriptor_dict)
 
         return descriptor
 
@@ -937,27 +963,8 @@ class AudioTrackTranscriber(_TrackTranscriber):
                 sample_rate).value
         )))
 
-        for key, value in descriptor_dict.items():
-            # ClassName is not an AAF property
-            if key == "ClassName":
-                continue
-            # Don't overwrite already set properties
-            if key in descriptor:
-                continue
-
-            try:
-                key_typedef = descriptor[key].typedef
-                key_native_type = self.aaf_file.metadict.lookup_class(
-                    key_typedef.class_id)
-
-                if key_native_type is aaf2.types.TypeDefRecord \
-                        and key_typedef.type_name == 'AUID':
-                    key_native_value = aaf2.types.AUID(value)
-                    descriptor[key].value = key_native_value
-                else:
-                    descriptor[key].value = value
-            except KeyError as e:
-                logger.warning(f'Translation of \"{key}\" is impossible: {e}')
+        # Finalize the descriptor with the rest of the properties
+        descriptor = self.transcribe_otio_aaf_descriptor(descriptor, descriptor_dict)
 
         return descriptor
 
