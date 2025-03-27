@@ -14,6 +14,8 @@ import sys
 
 import collections
 import fractions
+from typing import List
+
 import opentimelineio as otio
 
 lib_path = os.environ.get("OTIO_AAF_PYTHON_LIB")
@@ -27,6 +29,7 @@ import aaf2.components  # noqa: E402
 import aaf2.core  # noqa: E402
 import aaf2.misc  # noqa: E402
 from otio_aaf_adapter.adapters.aaf_adapter import aaf_writer  # noqa: E402
+from otio_aaf_adapter.adapters.aaf_adapter import hooks  # noqa: E402
 
 
 debug = False
@@ -268,35 +271,36 @@ def _convert_rgb_to_marker_color(rgb_dict):
 
 def _find_timecode_mobs(item):
     mobs = [item.mob]
-
-    for c in item.walk():
-        if isinstance(c, aaf2.components.SourceClip):
-            mob = c.mob
-            if mob:
-                mobs.append(mob)
+    try:
+        for c in item.walk():
+            if isinstance(c, aaf2.components.SourceClip):
+                mob = c.mob
+                if mob:
+                    mobs.append(mob)
+                else:
+                    continue
             else:
+                # This could be 'EssenceGroup', 'Pulldown' or other segment
+                # subclasses
+                # For example:
+                # An EssenceGroup is a Segment that has one or more
+                # alternate choices, each of which represent different variations
+                # of one actual piece of content.
+                # According to the AAF Object Specification and Edit Protocol
+                # documents:
+                # "Typically the different representations vary in essence format,
+                # compression, or frame size. The application is responsible for
+                # choosing the appropriate implementation of the essence."
+                # It also says they should all have the same length, but
+                # there might be nested Sequences inside which we're not attempting
+                # to handle here (yet). We'll need a concrete example to ensure
+                # we're doing the right thing.
+                # TODO: Is the Timecode for an EssenceGroup correct?
+                # TODO: Try CountChoices() and ChoiceAt(i)
+                # For now, lets just skip it.
                 continue
-        else:
-            # This could be 'EssenceGroup', 'Pulldown' or other segment
-            # subclasses
-            # For example:
-            # An EssenceGroup is a Segment that has one or more
-            # alternate choices, each of which represent different variations
-            # of one actual piece of content.
-            # According to the AAF Object Specification and Edit Protocol
-            # documents:
-            # "Typically the different representations vary in essence format,
-            # compression, or frame size. The application is responsible for
-            # choosing the appropriate implementation of the essence."
-            # It also says they should all have the same length, but
-            # there might be nested Sequences inside which we're not attempting
-            # to handle here (yet). We'll need a concrete example to ensure
-            # we're doing the right thing.
-            # TODO: Is the Timecode for an EssenceGroup correct?
-            # TODO: Try CountChoices() and ChoiceAt(i)
-            # For now, lets just skip it.
-            continue
-
+    except NotImplementedError as err:
+        _transcribe_log(f"Couldn't walk component. Skip:\n{repr(err)}")
     return mobs
 
 
@@ -1605,25 +1609,23 @@ def _get_mobs_for_transcription(storage):
 
 
 def read_from_file(
-    filepath,
-    simplify=True,
-    transcribe_log=False,
-    attach_markers=True,
-    bake_keyframed_properties=False
-):
+    filepath: str,
+    simplify: bool = True,
+    transcribe_log: bool = False,
+    attach_markers: bool = True,
+    bake_keyframed_properties: bool = False,
+    **kwargs
+) -> otio.schema.Timeline:
     """Reads AAF content from `filepath` and outputs an OTIO timeline object.
 
     Args:
-        filepath (str): AAF filepath
-        simplify (bool, optional): simplify timeline structure by stripping empty items
-        transcribe_log (bool, optional): log activity as items are getting transcribed
-        attach_markers (bool, optional): attaches markers to their appropriate items
+        filepath: AAF filepath
+        simplify: simplify timeline structure by stripping empty items
+        transcribe_log: log activity as items are getting transcribed
+        attach_markers: attaches markers to their appropriate items
                                          like clip, gap. etc on the track
-        bake_keyframed_properties (bool, optional): bakes animated property values
-                                                    for each frame in a source clip
-    Returns:
-        otio.schema.Timeline
-
+        bake_keyframed_properties: bakes animated property values
+                                   for each frame in a source clip
     """
     # 'activate' transcribe logging if adapter argument is provided.
     # Note that a global 'switch' is used in order to avoid
@@ -1637,30 +1639,49 @@ def read_from_file(
         # Note: We're skipping: aaf_file.header
         # Is there something valuable in there?
 
+        # trigger adapter specific pre-transcribe read hook
+        hooks.run_pre_read_transcribe_hook(
+            read_filepath=filepath,
+            aaf_handle=aaf_file,
+            extra_kwargs=kwargs.get(
+                "hook_function_argument_map", {}
+            )
+        )
+
         storage = aaf_file.content
         mobs_to_transcribe = _get_mobs_for_transcription(storage)
 
-        result = _transcribe(mobs_to_transcribe, parents=list(), edit_rate=None)
+        timeline = _transcribe(mobs_to_transcribe, parents=list(), edit_rate=None)
+
+        # trigger adapter specific post-transcribe read hook
+        hooks.run_post_read_transcribe_hook(
+            timeline=timeline,
+            read_filepath=filepath,
+            aaf_handle=aaf_file,
+            extra_kwargs=kwargs.get(
+                "hook_function_argument_map", {}
+            )
+        )
 
     # OTIO represents transitions a bit different than AAF, so
     # we need to iterate over them and modify the items on either side.
     # Note this needs to be done before attaching markers, marker
     # positions are not stored with transition length offsets
-    _fix_transitions(result)
+    _fix_transitions(timeline)
 
     # Attach marker to the appropriate clip, gap etc.
     if attach_markers:
-        result = _attach_markers(result)
+        timeline = _attach_markers(timeline)
 
     # AAF is typically more deeply nested than OTIO.
     # Let's try to simplify the structure by collapsing or removing
     # unnecessary stuff.
     if simplify:
-        result = _simplify(result)
+        timeline = _simplify(timeline)
 
     # Reset transcribe_log debugging
     _TRANSCRIBE_DEBUG = False
-    return result
+    return timeline
 
 
 def write_to_file(
@@ -1668,20 +1689,46 @@ def write_to_file(
     filepath,
     prefer_file_mob_id=False,
     use_empty_mob_ids=False,
+    embed_essence=False,
+    create_edgecode=False,
     **kwargs
 ):
+    """Serialize `input_otio` to an AAF file at `filepath`.
 
+    Args:
+        input_otio(otio.schema.Timeline): input timeline to serialize
+        filepath(str): output filepath for .aaf file
+        prefer_file_mob_id(Optional[bool]): Attempt to extract
+            the Mob ID from referenced files first.
+        use_empty_mob_ids(Optional[bool]): Do not extract Mob IDs from metadata
+        embed_essence(Optional[bool]): if `True`, media essence will be included in AAF
+        create_edgecode(Optional[bool]): if `True` each clip will get an EdgeCode slot
+                assigned that defines the Avid Frame Count Start / End.
+        **kwargs: extra adapter arguments
+    """
     with aaf2.open(filepath, "w") as f:
+        # trigger adapter specific pre-transcribe write hook
+        hook_tl = hooks.run_pre_write_transcribe_hook(
+            timeline=input_otio,
+            write_filepath=filepath,
+            aaf_handle=f,
+            embed_essence=embed_essence,
+            extra_kwargs=kwargs.get(
+                "hook_function_argument_map", {}
+            )
+        )
 
-        timeline = aaf_writer._stackify_nested_groups(input_otio)
+        timeline = aaf_writer._stackify_nested_groups(hook_tl)
 
         aaf_writer.validate_metadata(timeline)
 
         otio2aaf = aaf_writer.AAFFileTranscriber(
-            timeline,
-            f,
+            input_otio=timeline,
+            aaf_file=f,
             prefer_file_mob_id=prefer_file_mob_id,
             use_empty_mob_ids=use_empty_mob_ids,
+            embed_essence=embed_essence,
+            create_edgecode=create_edgecode,
             **kwargs
         )
 
@@ -1708,3 +1755,24 @@ def write_to_file(
         # This is required for compatibility with DaVinci Resolve.
         if default_edit_rate or input_otio.global_start_time:
             otio2aaf.add_timecode(input_otio, default_edit_rate)
+
+        # trigger adapter specific post-transcribe write hook
+        hooks.run_post_write_transcribe_hook(
+            timeline=timeline,
+            write_filepath=filepath,
+            aaf_handle=f,
+            embed_essence=embed_essence,
+            extra_kwargs=kwargs.get(
+                "hook_function_argument_map", {}
+            )
+        )
+
+
+def adapter_hook_names() -> List[str]:
+    """Returns names of custom hooks implemented by this adapter."""
+    return [
+        hooks.HOOK_POST_READ_TRANSCRIBE,
+        hooks.HOOK_POST_WRITE_TRANSCRIBE,
+        hooks.HOOK_PRE_READ_TRANSCRIBE,
+        hooks.HOOK_PRE_WRITE_TRANSCRIBE
+    ]

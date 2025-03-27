@@ -9,12 +9,15 @@ import sys
 import unittest
 import tempfile
 import io
+import contextlib
+from pathlib import Path
 
 import opentimelineio as otio
 from otio_aaf_adapter.adapters.aaf_adapter.aaf_writer import (
     AAFAdapterError,
     AAFValidationError
 )
+from otio_aaf_adapter.adapters.aaf_adapter import hooks
 
 # module needs to be imported for code coverage to work
 import otio_aaf_adapter.adapters.advanced_authoring_format  # noqa: F401
@@ -239,7 +242,8 @@ try:
                                  Transition,
                                  Timecode,
                                  OperationGroup,
-                                 Sequence)
+                                 Sequence,
+                                 EdgeCode)
     from aaf2.mobs import MasterMob, SourceMob
     from aaf2.misc import VaryingValue
     from aaf2.mobid import MobID
@@ -1828,7 +1832,24 @@ class AAFReaderTests(unittest.TestCase):
                          )
 
 
+@contextlib.contextmanager
+def with_hooks_plugin_environment():
+    env_bkp = os.environ.copy()
+    try:
+        os.environ["OTIO_PLUGIN_MANIFEST_PATH"] = (
+            os.fspath(
+                Path(__file__).parent / "hooks_plugin_example/plugin_manifest.json"
+            )
+        )
+        otio.plugins.manifest.ActiveManifest(force_reload=True)
+        yield
+    finally:
+        os.environ = env_bkp
+        otio.plugins.manifest.ActiveManifest(force_reload=True)
+
+
 class AAFWriterTests(unittest.TestCase):
+
     def test_aaf_writer_gaps(self):
         otio_timeline = otio.adapters.read_from_file(GAPS_OTIO_PATH)
         fd, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
@@ -2394,10 +2415,12 @@ class AAFWriterTests(unittest.TestCase):
         self.assertTrue(isinstance(compmob_clip.mob, MasterMob))
         mastermob = compmob_clip.mob
         for mastermob_slot in mastermob.slots:
-            mastermob_clip = mastermob_slot.segment
-            self.assertTrue(isinstance(mastermob_clip, SourceClip))
-            self.assertTrue(isinstance(mastermob_clip.mob, SourceMob))
-            filemob = mastermob_clip.mob
+            mastermob_segment = mastermob_slot.segment
+            self.assertTrue(isinstance(mastermob_segment, (SourceClip, EdgeCode)))
+
+            if isinstance(mastermob_segment, SourceClip):
+                self.assertTrue(isinstance(mastermob_segment.mob, SourceMob))
+                filemob = mastermob_segment.mob
 
             if (otio_child.media_reference):
                 self.assertEqual(len(filemob.descriptor['Locator']), 1)
@@ -2413,26 +2436,31 @@ class AAFWriterTests(unittest.TestCase):
             tapemob = filemob_clip.mob
             self.assertTrue(len(tapemob.slots) >= 2)
 
-            if (otio_child.media_reference):
+            if otio_child.media_reference:
                 self.assertEqual(len(tapemob.descriptor['Locator']), 1)
                 locator = tapemob.descriptor['Locator'].value[0]
                 self.assertEqual(locator['URLString'].value,
                                  otio_child.media_reference.target_url)
 
-            timecode_slots = [tape_slot for tape_slot in tapemob.slots
-                              if isinstance(tape_slot.segment,
-                                            Timecode)]
+                timecode_slots = [tape_slot for tape_slot in tapemob.slots if
+                                  isinstance(tape_slot.segment, Timecode)]
 
-            self.assertEqual(1, len(timecode_slots))
+                self.assertEqual(1, len(timecode_slots))
 
-            for tape_slot in tapemob.slots:
-                tapemob_component = tape_slot.segment
-                if not isinstance(tapemob_component, Timecode):
-                    self.assertTrue(isinstance(tapemob_component, SourceClip))
-                    tapemob_clip = tapemob_component
-                    self.assertEqual(None, tapemob_clip.mob)
-                    self.assertEqual(None, tapemob_clip.slot)
-                    self.assertEqual(0, tapemob_clip.slot_id)
+                for tape_slot in tapemob.slots:
+                    tapemob_component = tape_slot.segment
+                    if not isinstance(tapemob_component, Timecode):
+                        self.assertTrue(isinstance(tapemob_component, SourceClip))
+                        tapemob_clip = tapemob_component
+                        self.assertEqual(None, tapemob_clip.mob)
+                        self.assertEqual(None, tapemob_clip.slot)
+                        self.assertEqual(0, tapemob_clip.slot_id)
+
+            elif isinstance(mastermob_segment, EdgeCode):
+                self.assertEqual(mastermob_segment["AvEdgeType"].value, 3)
+                self.assertEqual(mastermob_segment["AvFilmType"].value, 0)
+                self.assertEqual(mastermob_segment["FilmKind"].value, "Ft35MM")
+                self.assertEqual(mastermob_segment["CodeFormat"].value, "EtNull")
 
     def _is_otio_aaf_same(self, otio_child, aaf_component):
         if isinstance(aaf_component, SourceClip):
@@ -2454,6 +2482,269 @@ class AAFWriterTests(unittest.TestCase):
             for orig_point, dest_point in zip(orig_pointlist, dest_pointlist):
                 self.assertEqual(orig_point["Value"], dest_point.value)
                 self.assertEqual(orig_point["Time"], dest_point.time)
+
+    def test_transcribe_hooks_registry(self):
+        """Tests if the hook example correctly registers with OTIO."""
+        with with_hooks_plugin_environment():
+            for hook_script in ["post_aaf_write_transcribe_hook",
+                                "pre_aaf_write_transcribe_hook",
+                                "post_aaf_read_transcribe_hook",
+                                "pre_aaf_read_transcribe_hook"]:
+                self.assertIn(
+                    hook_script,
+                    otio.plugins.plugin_info_map()["hook_scripts"]
+                )
+
+            for hook_name in [hooks.HOOK_PRE_WRITE_TRANSCRIBE,
+                              hooks.HOOK_POST_WRITE_TRANSCRIBE,
+                              hooks.HOOK_PRE_READ_TRANSCRIBE,
+                              hooks.HOOK_POST_READ_TRANSCRIBE]:
+                self.assertIn(
+                    hook_name,
+                    otio.plugins.plugin_info_map()["hooks"]
+                )
+
+    def test_transcribe_hook_args_map(self):
+        """Tests if extra arguments are correctly passed to the hooks.
+        """
+
+        tl = otio.schema.Timeline(tracks=[])
+        _, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
+        if otio.adapters.from_name("AAF").has_feature("hooks"):
+            with with_hooks_plugin_environment():
+                with self.assertRaises(AAFAdapterError):
+                    otio.adapters.write_to_file(
+                        tl,
+                        filepath=tmp_aaf_path,
+                        embed_essence=True,
+                        use_empty_mob_ids=True,
+                        hook_function_argument_map={
+                            "test_pre_hook_raise": True
+                        }
+                    )
+
+                with self.assertRaises(AAFAdapterError):
+                    otio.adapters.write_to_file(
+                        tl,
+                        filepath=tmp_aaf_path,
+                        embed_essence=True,
+                        use_empty_mob_ids=True,
+                        hook_function_argument_map={
+                            "test_post_hook_raise": True
+                        }
+                    )
+
+    def test_transcribe_embed_dnx_data(self):
+        """Tests simple DNX image data essence import."""
+        range = otio.opentime.TimeRange(
+            start_time=otio.opentime.RationalTime(
+                value=1,
+                rate=24.0
+            ),
+            duration=otio.opentime.RationalTime(
+                value=24,
+                rate=24.0
+            )
+        )
+        media_reference_dnx = otio.schema.ExternalReference(
+            target_url=os.fspath(Path(SAMPLE_DATA_DIR) /
+                                 "picchu_seq0100_snippet_dnx.dnx"),
+            available_range=range
+        )
+        dnx_clip = otio.schema.Clip(
+            name="EmbeddedClip",
+            source_range=range,
+            media_reference=media_reference_dnx
+        )
+
+        track = otio.schema.Track(children=[dnx_clip], kind=otio.schema.TrackKind.Video)
+        tl = otio.schema.Timeline(tracks=[track])
+
+        _, tmp_aaf_path = tempfile.mkstemp(prefix="embed_dnx_", suffix='.aaf')
+
+        otio.adapters.write_to_file(
+            tl,
+            filepath=tmp_aaf_path,
+            embed_essence=True,
+            use_empty_mob_ids=True,
+        )
+
+        self._assertEssenceAAF(tl, tmp_aaf_path)
+
+    def test_transcribe_embed_aaf_clip_mob_id(self):
+        """Tests simple AAF essence import with the Mob ID for the MasterMob stored
+        on the clip."""
+        range = otio.opentime.TimeRange(
+            start_time=otio.opentime.RationalTime(
+                value=0,
+                rate=24.0
+            ),
+            duration=otio.opentime.RationalTime(
+                value=24,
+                rate=24.0
+            )
+        )
+        media_reference_aaf = otio.schema.ExternalReference(
+            target_url=os.fspath(Path(SAMPLE_DATA_DIR) /
+                                 "picchu_seq0100_snippet_embedded.aaf"),
+            available_range=range
+        )
+        aaf_clip = otio.schema.Clip(
+            name="EmbeddedClip",
+            source_range=range,
+            media_reference=media_reference_aaf
+        )
+
+        aaf_clip.metadata["AAF"] = {
+            "SourceID":
+            "urn:smpte:umid:060a2b34.01010105.01010f20.13000000."
+            "d118caad.97b44c06.807ef723.fd32dc64"
+        }
+
+        track = otio.schema.Track(children=[aaf_clip], kind=otio.schema.TrackKind.Video)
+        tl = otio.schema.Timeline(tracks=[track])
+
+        _, tmp_aaf_path = tempfile.mkstemp(prefix="embed_aaf_clip_", suffix='.aaf')
+
+        otio.adapters.write_to_file(
+            tl,
+            filepath=tmp_aaf_path,
+            embed_essence=True
+        )
+
+        self._assertEssenceAAF(tl, tmp_aaf_path)
+
+    def test_transcribe_embed_aaf_media_ref_mob_id(self):
+        """Tests simple AAF essenceimport with the Mob ID for the MasterMob stored
+        on the media reference."""
+        range = otio.opentime.TimeRange(
+            start_time=otio.opentime.RationalTime(
+                value=0,
+                rate=24.0
+            ),
+            duration=otio.opentime.RationalTime(
+                value=24,
+                rate=24.0
+            )
+        )
+        media_reference_aaf = otio.schema.ExternalReference(
+            target_url=os.fspath(Path(SAMPLE_DATA_DIR) /
+                                 "picchu_seq0100_snippet_embedded.aaf"),
+            available_range=range
+        )
+        aaf_clip = otio.schema.Clip(
+            name="EmbeddedClip",
+            source_range=range,
+            media_reference=media_reference_aaf
+        )
+
+        media_reference_aaf.metadata["AAF"] = {
+            "SourceID":
+            "urn:smpte:umid:060a2b34.01010105.01010f20.13000000."
+            "d118caad.97b44c06.807ef723.fd32dc64"
+        }
+
+        track = otio.schema.Track(children=[aaf_clip], kind=otio.schema.TrackKind.Video)
+        tl = otio.schema.Timeline(tracks=[track])
+
+        _, tmp_aaf_path = tempfile.mkstemp(prefix="embed_aaf_mediaref_", suffix='.aaf')
+
+        otio.adapters.write_to_file(
+            tl,
+            filepath=tmp_aaf_path,
+            embed_essence=True
+        )
+
+        self._assertEssenceAAF(tl, tmp_aaf_path)
+
+    def test_transcribe_embed_mov_format_failure(self):
+        """Checks if embedding fails when external reference media isn't supported /
+        transcoded.
+        """
+        range = otio.opentime.TimeRange(
+            start_time=otio.opentime.RationalTime(
+                value=0,
+                rate=24.0
+            ),
+            duration=otio.opentime.RationalTime(
+                value=24,
+                rate=24.0
+            )
+        )
+
+        media_reference_mov = otio.schema.ExternalReference(
+            target_url=os.fspath(Path(SAMPLE_DATA_DIR) /
+                                 "picchu_seq0100_snippet_dnx.mov"),
+            available_range=range
+        )
+        mov_clip = otio.schema.Clip(
+            name="EmbeddedClip",
+            source_range=range,
+            media_reference=media_reference_mov
+        )
+
+        track = otio.schema.Track(children=[mov_clip], kind=otio.schema.TrackKind.Video)
+        tl = otio.schema.Timeline(tracks=[track])
+
+        _, tmp_aaf_path = tempfile.mkstemp(prefix="embed_mov_failure_", suffix='.aaf')
+
+        with self.assertRaises(AAFAdapterError):
+            otio.adapters.write_to_file(
+                tl,
+                filepath=tmp_aaf_path,
+                embed_essence=True,
+                use_empty_mob_ids=True)
+
+    def test_transcribe_embed_mov_with_transcode_hook(self):
+        """Checks if a mov import works when run with a mocked transcoding hook.
+        """
+        range = otio.opentime.TimeRange(
+            start_time=otio.opentime.RationalTime(
+                value=0,
+                rate=24.0
+            ),
+            duration=otio.opentime.RationalTime(
+                value=24,
+                rate=24.0
+            )
+        )
+
+        media_reference_mov = otio.schema.ExternalReference(
+            target_url=os.fspath(Path(SAMPLE_DATA_DIR) /
+                                 "picchu_seq0100_snippet_dnx.mov"),
+            available_range=range
+        )
+        mov_clip = otio.schema.Clip(
+            name="EmbeddedClip",
+            source_range=range,
+            media_reference=media_reference_mov
+        )
+
+        track = otio.schema.Track(children=[mov_clip], kind=otio.schema.TrackKind.Video)
+        tl = otio.schema.Timeline(tracks=[track])
+
+        _, tmp_aaf_path = tempfile.mkstemp(prefix="embed_mov_hook_", suffix='.aaf')
+
+        with with_hooks_plugin_environment():
+            otio.adapters.write_to_file(
+                tl,
+                filepath=tmp_aaf_path,
+                embed_essence=True,
+                use_empty_mob_ids=True)
+
+    def _assertEssenceAAF(self, reference_tl, tmp_aaf_path):
+        self.assertTrue(Path(tmp_aaf_path).is_file())
+
+        with aaf2.open(tmp_aaf_path) as aaf_file:
+            self.assertEqual(len(aaf_file.content.essencedata), 1)
+
+        aaf_tl = otio.adapters.read_from_file(tmp_aaf_path)
+        aaf_clips = {c.name: c for c in aaf_tl.find_clips()}
+
+        for ref_clip in reference_tl.find_clips():
+            aaf_clip = aaf_clips.get(ref_clip.name)
+            self.assertIsNotNone(aaf_clip)
+            self.assertEqual(aaf_clip.source_range, ref_clip.source_range)
 
 
 class SimplifyTests(unittest.TestCase):

@@ -1,0 +1,35 @@
+{
+    "OTIO_SCHEMA" : "PluginManifest.1",
+    "hook_scripts" : [
+        {
+            "OTIO_SCHEMA" : "HookScript.1",
+            "name" : "pre_aaf_write_transcribe_hook",
+            "execution_scope" : "in process",
+            "filepath" : "pre_aaf_write_transcribe_hook.py"
+        },
+        {
+            "OTIO_SCHEMA" : "HookScript.1",
+            "name" : "post_aaf_write_transcribe_hook",
+            "execution_scope" : "in process",
+            "filepath" : "post_aaf_write_transcribe_hook.py"
+        },
+        {
+            "OTIO_SCHEMA" : "HookScript.1",
+            "name" : "pre_aaf_read_transcribe_hook",
+            "execution_scope" : "in process",
+            "filepath" : "pre_aaf_read_transcribe_hook.py"
+        },
+        {
+            "OTIO_SCHEMA" : "HookScript.1",
+            "name" : "post_aaf_read_transcribe_hook",
+            "execution_scope" : "in process",
+            "filepath" : "post_aaf_read_transcribe_hook.py"
+        }
+    ],
+    "hooks" : {
+        "otio_aaf_pre_write_transcribe": ["pre_aaf_write_transcribe_hook"],
+        "otio_aaf_post_write_transcribe": ["post_aaf_write_transcribe_hook"],
+        "otio_aaf_pre_read_transcribe": ["pre_aaf_read_transcribe_hook"],
+        "otio_aaf_post_read_transcribe": ["post_aaf_read_transcribe_hook"]
+    }
+}
