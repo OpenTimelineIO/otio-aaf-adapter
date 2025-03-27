@@ -5,9 +5,15 @@
 
 Specifies how to transcribe an OpenTimelineIO file into an AAF file.
 """
+from . import hooks
+
+from pathlib import Path
+from typing import Tuple
+from typing import List
 from numbers import Rational
 
 import aaf2
+import aaf2.mobs
 import abc
 import uuid
 import opentimelineio as otio
@@ -43,11 +49,9 @@ def _is_considered_gap(thing):
     if isinstance(thing, otio.schema.Gap):
         return True
 
-    if (
-            isinstance(thing, otio.schema.Clip)
-            and isinstance(
-                thing.media_reference,
-                otio.schema.GeneratorReference)
+    if isinstance(thing, otio.schema.Clip) and isinstance(
+            thing.media_reference,
+            otio.schema.GeneratorReference
     ):
         if thing.media_reference.generator_kind in ("Slug",):
             return True
@@ -97,15 +101,20 @@ class AAFFileTranscriber:
     otio to aaf. This includes keeping track of unique tapemobs and mastermobs.
     """
 
-    def __init__(self, input_otio, aaf_file, **kwargs):
+    def __init__(self, input_otio, aaf_file, embed_essence, create_edgecode, **kwargs):
         """
         AAFFileTranscriber requires an input timeline and an output pyaaf2 file handle.
 
         Args:
-            input_otio: an input OpenTimelineIO timeline
-            aaf_file: a pyaaf2 file handle to an output file
+            input_otio(otio.schema.Timeline): an input OpenTimelineIO timeline
+            aaf_file(aaf2.file.AAFFile): a pyaaf2 file handle to an output file
+            embed_essence(bool): if `True`, media references will be embedded into AAF
+            create_edgecode(bool): if `True` each clip will get an EdgeCode slot
+                assigned that defines the Avid Frame Count Start / End.
         """
         self.aaf_file = aaf_file
+        self.embed_essence = embed_essence
+        self.create_edgecode = create_edgecode
         self.compositionmob = self.aaf_file.create.CompositionMob()
         self.compositionmob.name = input_otio.name
         self.compositionmob.usage = "Usage_TopLevel"
@@ -152,9 +161,10 @@ class AAFFileTranscriber:
             # to use drop frame with a nominal integer fps.
             edit_rate = otio_clip.visible_range().duration.rate
             timecode_fps = round(edit_rate)
-            tape_timecode_slot = tapemob.create_timecode_slot(
-                edit_rate=edit_rate,
-                timecode_fps=timecode_fps,
+            tape_slot, tape_timecode_slot = tapemob.create_tape_slots(
+                otio_clip.name,
+                edit_rate=otio_clip.visible_range().duration.rate,
+                timecode_fps=round(otio_clip.visible_range().duration.rate),
                 drop_frame=(edit_rate != timecode_fps)
             )
             timecode_start = int(
@@ -180,9 +190,13 @@ class AAFFileTranscriber:
     def track_transcriber(self, otio_track):
         """Return an appropriate _TrackTranscriber given an otio track."""
         if otio_track.kind == otio.schema.TrackKind.Video:
-            transcriber = VideoTrackTranscriber(self, otio_track)
+            transcriber = VideoTrackTranscriber(self, otio_track,
+                                                embed_essence=self.embed_essence,
+                                                create_edgecode=self.create_edgecode)
         elif otio_track.kind == otio.schema.TrackKind.Audio:
-            transcriber = AudioTrackTranscriber(self, otio_track)
+            transcriber = AudioTrackTranscriber(self, otio_track,
+                                                embed_essence=self.embed_essence,
+                                                create_edgecode=self.create_edgecode)
         else:
             raise otio.exceptions.NotSupportedError(
                 f"Unsupported track kind: {otio_track.kind}")
@@ -273,11 +287,11 @@ def validate_metadata(timeline):
                 __check(child, "duration().rate").equals(edit_rate),
                 __check(child, "metadata['AAF']['PointList']"),
                 __check(child, "metadata['AAF']['OperationGroup']['Operation']"
-                        "['DataDefinition']['Name']"),
+                               "['DataDefinition']['Name']"),
                 __check(child, "metadata['AAF']['OperationGroup']['Operation']"
-                        "['Description']"),
+                               "['Description']"),
                 __check(child, "metadata['AAF']['OperationGroup']['Operation']"
-                        "['Name']"),
+                               "['Name']"),
                 __check(child, "metadata['AAF']['CutPoint']")
             ]
         all_checks.extend(checks)
@@ -378,19 +392,27 @@ class _TrackTranscriber:
     """
     __metaclass__ = abc.ABCMeta
 
-    def __init__(self, root_file_transcriber, otio_track):
+    def __init__(self, root_file_transcriber, otio_track,
+                 embed_essence, create_edgecode):
         """
         _TrackTranscriber
 
         Args:
-            root_file_transcriber: the corresponding 'parent' AAFFileTranscriber object
-            otio_track: the given otio_track to convert
+            root_file_transcriber(AAFFileTranscriber): the corresponding 'parent'
+                AAFFileTranscriber object
+            otio_track(otio.schema.Track): the given otio_track to convert
+            embed_essence(bool): if `True`, referenced media files in clips will be
+                embedded into the AAF file
+            create_edgecode(bool): if `True` each clip will get an EdgeCode slot
+                assigned that defines the Avid Frame Count Start / End.
         """
         self.root_file_transcriber = root_file_transcriber
         self.compositionmob = root_file_transcriber.compositionmob
         self.aaf_file = root_file_transcriber.aaf_file
         self.otio_track = otio_track
         self.edit_rate = self.otio_track.find_children()[0].duration().rate
+        self.embed_essence = embed_essence
+        self.create_edgecode = create_edgecode
         self.timeline_mobslot, self.sequence = self._create_timeline_mobslot()
         self.timeline_mobslot.name = self.otio_track.name
 
@@ -417,13 +439,13 @@ class _TrackTranscriber:
 
     @property
     @abc.abstractmethod
-    def media_kind(self):
+    def media_kind(self) -> str:
         """Return the string for what kind of track this is."""
         pass
 
     @property
     @abc.abstractmethod
-    def _master_mob_slot_id(self):
+    def _master_mob_slot_id(self) -> int:
         """
         Return the MasterMob Slot ID for the corresponding track media kind
         """
@@ -435,7 +457,8 @@ class _TrackTranscriber:
         pass
 
     @abc.abstractmethod
-    def _create_timeline_mobslot(self):
+    def _create_timeline_mobslot(self) \
+            -> Tuple[aaf2.mobslots.TimelineMobSlot, aaf2.components.Sequence]:
         """
         Return a timeline_mobslot and sequence for this track.
 
@@ -448,17 +471,88 @@ class _TrackTranscriber:
         pass
 
     @abc.abstractmethod
-    def default_descriptor(self, otio_clip):
+    def default_descriptor(self, otio_clip) -> aaf2.essence.EssenceDescriptor:
         pass
 
     @abc.abstractmethod
-    def _transition_parameters(self):
+    def _transition_parameters(self) -> \
+            Tuple[List[aaf2.dictionary.ParameterDef], aaf2.misc.Parameter]:
+        pass
+
+    @abc.abstractmethod
+    def _import_essence_for_clip(self,
+                                 otio_clip: otio.schema.Clip,
+                                 essence_path: Path) \
+            -> Tuple[aaf2.mobs.MasterMob, aaf2.mobslots.TimelineMobSlot]:
         pass
 
     def aaf_network_locator(self, otio_external_ref):
         locator = self.aaf_file.create.NetworkLocator()
         locator['URLString'].value = otio_external_ref.target_url
         return locator
+
+    def _copy_essence_for_clip(self,
+                               otio_clip: otio.schema.Clip,
+                               aaf_file_path: Path) \
+            -> Tuple[aaf2.mobs.MasterMob, aaf2.mobslots.TimelineMobSlot]:
+        # get Mob ID and make make sure it's a valid MobID object type
+        mob_id = self.root_file_transcriber._clip_mob_ids_map.get(otio_clip)
+        if isinstance(mob_id, str):
+            urn_str = mob_id
+            mob_id = aaf2.mobs.MobID()
+            mob_id.urn = urn_str
+
+        # open source AAF file and copy essence
+        with aaf2.open(str(aaf_file_path), "r") as src_aaf:
+            # copy over master mob and essence from source AAF to target AAF
+            for src_master_mob in src_aaf.content.mastermobs():
+                if src_master_mob.mob_id != mob_id:
+                    continue
+
+                # copy the essence data from file src_aaf to target aaf
+                for i, slot in enumerate(src_master_mob.slots):
+                    if isinstance(
+                            slot, aaf2.mobslots.TimelineMobSlot
+                    ):
+                        # copy essence from file aaf_file_path to target aaf
+                        src_source_mob = slot.segment.mob
+                        essence_data_copy = src_source_mob.essence.copy(
+                            root=self.aaf_file
+                        )
+                        self.aaf_file.content.essencedata.append(essence_data_copy)
+
+                        # copy source mob from file aaf_file_path to target aaf
+                        src_source_mob = slot.segment.mob
+                        source_mob_copy = src_source_mob.copy(root=self.aaf_file)
+                        self.aaf_file.content.mobs.append(source_mob_copy)
+                        break
+                else:
+                    raise AAFAdapterError(
+                        f"No essence data to copy for MasterMob with "
+                        f"ID '{mob_id}' in media reference AAF file: {aaf_file_path}"
+                    )
+
+                # copy master mob from file aaf_file_path to target aaf
+                master_mob_copy = src_master_mob.copy(root=self.aaf_file)
+                self.aaf_file.content.mobs.append(master_mob_copy)
+
+                # get timeline slot for master mob
+                for slot in master_mob_copy.slots:
+                    if isinstance(
+                            slot, aaf2.mobslots.TimelineMobSlot
+                    ):
+                        master_mob_copy_tl_slot = slot
+                        break
+                else:
+                    raise AAFAdapterError(f"No TimelineMobSlot for MasterMob "
+                                          f"with ID '{mob_id}'.")
+
+                break
+            else:
+                raise AAFAdapterError(f"No matching MasterMob with ID '{mob_id}' "
+                                      f"in media reference AAF file: {aaf_file_path}")
+
+            return master_mob_copy, master_mob_copy_tl_slot
 
     def aaf_filler(self, otio_gap):
         """Convert an otio Gap into an aaf Filler"""
@@ -467,20 +561,58 @@ class _TrackTranscriber:
         return filler
 
     def aaf_sourceclip(self, otio_clip):
-        """Convert an otio Clip into an aaf SourceClip"""
-        tapemob, tapemob_slot = self._create_tapemob(otio_clip)
-        filemob, filemob_slot = self._create_filemob(otio_clip, tapemob, tapemob_slot)
-        mastermob, mastermob_slot = self._create_mastermob(otio_clip,
-                                                           filemob,
-                                                           filemob_slot)
+        """Convert an OTIO Clip into a pyaaf SourceClip.
+        If `self.embed_essence` is `True`, we attempt to import / embed
+        the media reference target URL file into the new AAF as media essence.
+
+        Args:
+            otio_clip(otio.schema.Clip): input OTIO clip
+
+        Returns:
+            `aaf2.components.SourceClip`
+
+        """
+        if self.embed_essence and not otio_clip.media_reference.is_missing_reference:
+            # embed essence for clip media
+            target_path = Path(
+                otio.url_utils.filepath_from_url(otio_clip.media_reference.target_url)
+            )
+            if not target_path.is_file():
+                raise FileNotFoundError(f"Cannot find file to embed essence from: "
+                                        f"'{target_path}'")
+
+            if target_path.suffix == ".aaf":
+                # copy over mobs and essence from existing AAF file
+                mastermob, mastermob_slot = self._copy_essence_for_clip(
+                    otio_clip, target_path
+                )
+            elif target_path.suffix in (".dnx", ".wav"):
+                # import essence from clip media reference
+                mastermob, mastermob_slot = self._import_essence_for_clip(
+                    otio_clip=otio_clip, essence_path=target_path
+                )
+            else:
+                raise AAFAdapterError(
+                    f"Cannot embed media reference at: '{target_path}'."
+                    f"Only .aaf / .dnx / .wav files are supported."
+                    f"You can add logic to transcode your media for "
+                    f"embedding by implementing a "
+                    f"'{hooks.HOOK_PRE_WRITE_TRANSCRIBE}' hook.")
+        else:
+            tapemob, tapemob_slot = self._create_tapemob(otio_clip)
+            filemob, filemob_slot = self._create_filemob(otio_clip, tapemob,
+                                                         tapemob_slot)
+            mastermob, mastermob_slot = self._create_mastermob(otio_clip,
+                                                               filemob,
+                                                               filemob_slot)
 
         # We need both `start_time` and `duration`
         # Here `start` is the offset between `first` and `in` values.
 
         offset = (otio_clip.visible_range().start_time -
                   otio_clip.available_range().start_time)
-        start = offset.value
-        length = otio_clip.visible_range().duration.value
+        start = int(offset.value)
+        length = int(otio_clip.visible_range().duration.value)
 
         compmob_clip = self.compositionmob.create_source_clip(
             slot_id=self.timeline_mobslot.slot_id,
@@ -492,6 +624,25 @@ class _TrackTranscriber:
         compmob_clip.mob = mastermob
         compmob_clip.slot = mastermob_slot
         compmob_clip.slot_id = mastermob_slot.slot_id
+
+        # create edgecode for Avid Frame Count properties
+        if self.create_edgecode:
+            ec_tl_slot = self._create_edgecode_timeline_slot(
+                edit_rate=self.edit_rate,
+                start=int(otio_clip.available_range().start_time.value),
+                length=int(otio_clip.available_range().duration.value)
+            )
+            mastermob.slots.append(ec_tl_slot)
+
+        # check if we need to set mark-in / mark-out
+        if otio_clip.visible_range() != otio_clip.available_range():
+            mastermob_slot["MarkIn"].value = int(
+                otio_clip.visible_range().start_time.value
+            )
+            mastermob_slot["MarkOut"].value = int(
+                otio_clip.visible_range().end_time_exclusive().value
+            )
+
         return compmob_clip
 
     def aaf_transition(self, otio_transition):
@@ -713,6 +864,40 @@ class _TrackTranscriber:
         mastermob_slot.segment = mastermob_clip
         return mastermob, mastermob_slot
 
+    def _create_edgecode_timeline_slot(self, edit_rate, start, length):
+        """Creates and edgecode timeline mob slot, which is needed
+        to set Frame Count Start and Frame Count End values in Avid.
+
+        Args:
+            aaf_file(aaf2.AAFFile): AAF file handle
+            edit_rate(Fraction): fractional edit rate
+            start(int): Frame Count Start frame number
+            length(int): clip length
+
+        Returns:
+            aaf2.TimelineMobSlot: edgecode TL mob slot
+
+        """
+        edgecode = self.aaf_file.create.EdgeCode()
+        edgecode.media_kind = "Edgecode"
+        edgecode["Start"].value = start
+        edgecode["Length"].value = length
+        edgecode["AvEdgeType"].value = 3
+        edgecode["AvFilmType"].value = 0
+        edgecode["FilmKind"].value = "Ft35MM"
+        edgecode["CodeFormat"].value = "EtNull"
+
+        ec_tl_slot = self.aaf_file.create.TimelineMobSlot(slot_id=20,
+                                                          edit_rate=edit_rate)
+        ec_tl_slot.name = "EC1"
+        ec_tl_slot.segment = edgecode
+
+        # Important magic number from Avid,
+        # track number has to be 6 otherwise MC will ignore it
+        ec_tl_slot["PhysicalTrackNumber"].value = 6
+
+        return ec_tl_slot
+
 
 class VideoTrackTranscriber(_TrackTranscriber):
     """Video track kind specialization of TrackTranscriber."""
@@ -846,6 +1031,26 @@ class VideoTrackTranscriber(_TrackTranscriber):
         opacity_u["VVal_FieldCount"].value = 1
 
         return [param_byteorder, param_effect_id], opacity_u
+
+    def _import_essence_for_clip(self, otio_clip, essence_path):
+        """Implements DNX video essence import"""
+        available_range = otio_clip.media_reference.available_range
+        start = int(available_range.start_time.value)
+        length = int(available_range.duration.value)
+        edit_rate = round(available_range.duration.rate)
+
+        # create master mobs
+        mastermob = self.root_file_transcriber._unique_mastermob(otio_clip)
+        tape_mob = self.root_file_transcriber._unique_tapemob(otio_clip)
+        tape_clip = tape_mob.create_source_clip(self._master_mob_slot_id, start=start)
+
+        # import video essence
+        mastermob_slot = mastermob.import_dnxhd_essence(path=str(essence_path),
+                                                        edit_rate=edit_rate,
+                                                        tape=tape_clip,
+                                                        length=length,
+                                                        offline=False)
+        return mastermob, mastermob_slot
 
 
 class AudioTrackTranscriber(_TrackTranscriber):
