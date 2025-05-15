@@ -13,7 +13,6 @@ import os
 import sys
 
 import collections
-import fractions
 from typing import List
 
 import opentimelineio as otio
@@ -153,6 +152,8 @@ def _transcribe_property(prop, owner=None):
                     }
                     result[child.name] = value_dict
 
+                elif isinstance(child, aaf2.dictionary.ParameterDef):
+                    result[child.name] = _transcribe_property(child, owner=prop)
                 elif hasattr(child, "value"):
                     # static value
                     result[child.name] = _transcribe_property(child.value, owner=owner)
@@ -168,7 +169,8 @@ def _transcribe_property(prop, owner=None):
         result["ClassName"] = _get_class_name(prop)
         for child in prop.properties():
             if isinstance(child, aaf2.properties.WeakRefProperty):
-                continue
+                if not isinstance(child.value, aaf2.dictionary.DataDef):
+                    continue
             result[child.name] = _transcribe_property(child.value, owner=child)
         return result
     else:
@@ -586,7 +588,6 @@ def _transcribe_master_mob(mob, parents, metadata, indent):
 
 
 def _transcribe(item, parents, edit_rate, indent=0):
-    global _MOB_TIMELINE_CACHE
     result = None
     metadata = {}
 
@@ -825,6 +826,14 @@ def _transcribe(item, parents, edit_rate, indent=0):
         _transcribe_log(msg, indent)
         result = _transcribe_operation_group(item, parents, metadata,
                                              edit_rate, indent + 2)
+        metadata = {}
+
+        # name the OperationGroup the name of the first clip found
+        # in effect with a name
+        for otio_clip in result.find_clips():
+            if otio_clip.name:
+                result.name = otio_clip.name
+                break
 
     elif isinstance(item, aaf2.mobslots.TimelineMobSlot):
         msg = f"Creating Track for TimelineMobSlot for {_encoded_name(item)}"
@@ -1146,7 +1155,7 @@ def _transcribe_operation_group(item, parents, metadata, edit_rate, indent):
 
     operation = metadata.get("Operation", {})
     parameters = metadata.get("Parameters", {})
-    result.name = operation.get("Name")
+    result.name = operation.get("Name", "OperationGroup")
 
     # Trust the length that is specified in the AAF
     length = metadata.get("Length")
@@ -1171,27 +1180,27 @@ def _transcribe_operation_group(item, parents, metadata, edit_rate, indent):
             # Unsupported time effect
             effect = otio.schema.TimeEffect()
             effect.effect_name = ""
-            effect.name = operation.get("Name")
     else:
         # Unsupported effect
         effect = otio.schema.Effect()
         effect.effect_name = ""
-        effect.name = operation.get("Name")
 
     if effect is not None:
         result.effects.append(effect)
 
         effect.metadata.clear()
-        effect.metadata.update({
-            "AAF": {
-                "Operation": operation,
-                "Parameters": parameters
-            }
-        })
+        effect.metadata["AAF"] = metadata
+        effect.name = operation.get("Name")
 
     for segment in item.getvalue("InputSegments", []):
         child = _transcribe(segment, parents + [item], edit_rate, indent)
         if child:
+            if not isinstance(child, otio.schema.Track):
+                track = otio.schema.Track()
+                track.kind = _transcribe_media_kind(segment.media_kind)
+                track.append(child)
+                child = track
+
             _add_child(result, child, segment)
 
     return result

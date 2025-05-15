@@ -2086,7 +2086,7 @@ class AAFWriterTests(unittest.TestCase):
         clip = og_aaf_tl.find_clips()[0]
 
         # change a value to test roundtrip
-        clip.media_reference.metadata["AAF"]["MobAttributeList"]["_USER_POS"] = 2
+        clip.metadata["AAF"]["MobAttributeList"]["_USER_POS"] = 2
         _, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
         otio.adapters.write_to_file(og_aaf_tl, tmp_aaf_path)
 
@@ -2101,7 +2101,7 @@ class AAFWriterTests(unittest.TestCase):
             "_USER_POS": 2,
             "_VERSION": 2
         }
-        self.assertEqual(clip.media_reference.metadata["AAF"]["MobAttributeList"],
+        self.assertEqual(clip.metadata["AAF"]["MobAttributeList"],
                          expected)
 
     def test_aaf_writer_global_start_time(self):
