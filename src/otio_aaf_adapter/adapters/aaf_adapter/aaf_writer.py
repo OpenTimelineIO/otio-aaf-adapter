@@ -682,8 +682,8 @@ class _TrackTranscriber:
         by_pass = op_group_metadata["Operation"].get("Bypass")
         number_inputs = op_group_metadata["Operation"].get("NumberInputs")
         operation_category = op_group_metadata["Operation"].get("OperationCategory")
-        data_def_name = op_group_metadata["Operation"]["DataDefinition"]["Name"]
-        data_def = self.aaf_file.dictionary.lookup_datadef(str(data_def_name))
+        data_def = self.aaf_file.dictionary.lookup_datadef(str(self.media_kind))
+
         description = op_group_metadata["Operation"]["Description"]
         op_def_name = otio_transition.metadata["AAF"][
             "OperationGroup"
