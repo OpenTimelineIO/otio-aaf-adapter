@@ -311,7 +311,8 @@ def _gather_clip_mob_ids(input_otio,
 
     def _from_clip_metadata(clip):
         """Get the MobID from the clip.metadata."""
-        return clip.metadata.get("AAF", {}).get("SourceID")
+        return (clip.metadata.get("AAF", {}).get("MobID") or
+                clip.metadata.get("AAF", {}).get("SourceID"))
 
     def _from_media_reference_metadata(clip):
         """Get the MobID from the media_reference.metadata."""
@@ -770,6 +771,8 @@ class _TrackTranscriber:
         tapemob_slot = tapemob.create_empty_slot(self.edit_rate, self.media_kind)
         tapemob_slot.segment.length = int(
             otio_clip.media_reference.available_range.duration.value)
+        tapemob_slot.segment.start = int(
+            otio_clip.media_reference.available_range.start_time.value)
         return tapemob, tapemob_slot
 
     def transcribe_otio_aaf_descriptor(
