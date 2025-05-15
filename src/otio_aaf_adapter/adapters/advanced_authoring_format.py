@@ -1150,6 +1150,15 @@ def _transcribe_fancy_timewarp(item, parameters):
     #     raise
 
 
+def _get_effect_id(item):
+    effect_id = _get_parameter(item, 'AvidEffectID')
+    if effect_id:
+        try:
+            return bytearray(effect_id.value).decode("utf8")
+        except Exception:
+            return None
+
+
 def _transcribe_operation_group(item, parents, metadata, edit_rate, indent):
     result = otio.schema.Stack()
 
@@ -1163,6 +1172,10 @@ def _transcribe_operation_group(item, parents, metadata, edit_rate, indent):
         otio.opentime.RationalTime(0, edit_rate),
         otio.opentime.RationalTime(length, edit_rate)
     )
+
+    effect_id = _get_effect_id(item)
+    if effect_id:
+        parameters["AvidEffectID"] = effect_id
 
     # Look for speed effects...
     effect = None
