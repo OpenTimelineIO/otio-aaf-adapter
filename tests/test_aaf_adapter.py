@@ -27,7 +27,7 @@ TRANSCRIPTION_RESULT = """---
 Transcribing top level mobs
 ---
 Creating SerializableCollection for Iterable for list
-  Creating Timeline for SubclipTSVNoData_NoVideo.Exported.02
+  Creating Timeline for CompositionMob for SubclipTSVNoData_NoVideo.Exported.02
     Creating Track for TimelineMobSlot for TimelineMobSlot
     Creating Track for TimelineMobSlot for TimelineMobSlot
     Creating Track for TimelineMobSlot for TimelineMobSlot
@@ -39,15 +39,22 @@ Creating SerializableCollection for Iterable for list
     Creating Track for TimelineMobSlot for DX
       Creating Track for Sequence for Sequence
         Creating operationGroup for OperationGroup
-          Creating SourceClip for Subclip.BREATH (Usage_SubClip)
-          [found child_mastermob]
-          Creating Timeline for subclip
-            Creating Track for TimelineMobSlot for TimelineMobSlot
-              Creating SourceClip for x000-0000_01_Xxxxx_Xxx.aaf
-              [found no mastermob]
-            Creating Track for MobSlot for EventMobSlot
-              Creating Track for Sequence for Sequence
-                Create marker for DescriptiveMarker
+            Creating Timeline for CompositionMob for Subclip.BREATH
+              Creating Track for TimelineMobSlot for TimelineMobSlot
+                  Creating Timeline for MasterMob for subclip
+                    Creating Track for TimelineMobSlot for TimelineMobSlot
+                      Creating MissingReference for SourceMob for xxxXXX009
+                      Creating ExternalReference for SourceMob for x000-0000_01_Xxxxx_Xxx.aaf
+                      Creating Clip for x000-0000_01_Xxxxx_Xxx.aaf
+                      Creating Track for MobSlot for EventMobSlot
+                        Creating Track for Sequence for Sequence
+                          Create marker for DescriptiveMarker
+                    Marker: 041 - 01 - INHALE,EXHALE - deep (time: 361667.0), attached to item: subclip
+                Creating Track for subclip
+              Creating Track for MobSlot for EventMobSlot
+                Creating Track for Sequence for Sequence
+                  Create marker for DescriptiveMarker
+          Creating Stack for Subclip.BREATH
     Creating Track for MobSlot for EventMobSlot
       Creating Track for Sequence for Sequence
         Create marker for DescriptiveMarker
@@ -55,8 +62,9 @@ Creating SerializableCollection for Iterable for list
       Creating Track for Sequence for Sequence
         Creating Gap for Filler
     Creating Track for TimelineMobSlot for TimelineMobSlot
-Marker: NEED PDX (time: 360567.0), attached to item: Subclip.BREATH
-"""
+Marker: BREATH - deep (time: 361667.0), attached to item: subclip
+Marker: NEED PDX (time: 361668.0), attached to item: subclip
+"""  # noqa: E501
 
 
 SAMPLE_DATA_DIR = os.path.join(os.path.dirname(__file__), "sample_data")
@@ -627,7 +635,7 @@ class AAFReaderTests(unittest.TestCase):
         for clip, correctWord in zip(timeline.tracks[0], correctWords):
             if isinstance(clip, otio.schema.Gap):
                 continue
-            AAFmetadata = clip.media_reference.metadata.get("AAF")
+            AAFmetadata = clip.metadata.get("AAF")
             self.assertIsNotNone(AAFmetadata)
             self.assertIsNotNone(AAFmetadata.get("UserComments"))
             self.assertEqual(
@@ -673,6 +681,7 @@ class AAFReaderTests(unittest.TestCase):
                 meta = c.metadata.get("AAF", {})
                 meta.pop('ComponentAttributeList', None)
                 meta.pop('DataDefinition', None)
+                meta.pop('LastModified', None)
                 meta.pop('Length', None)
                 meta.pop('StartTime', None)
 
@@ -1041,7 +1050,7 @@ class AAFReaderTests(unittest.TestCase):
         )
         self.assertEqual(
             (
-                first_clip.media_reference.metadata["AAF"]["UserComments"]["Comments"]
+                first_clip.metadata["AAF"]["UserComments"]["Comments"]
             ).encode('utf-8'),
             ("Comments_ABCXYZñçêœ•∑´®†¥¨ˆøπ“‘åß∂ƒ©˙∆˚¬…æΩ≈ç√∫˜µ≤≥÷").encode()
         )
@@ -1058,9 +1067,9 @@ class AAFReaderTests(unittest.TestCase):
         self.assertIsInstance(first_clip.media_reference,
                               otio.schema.ExternalReference)
 
-        unc_path = first_clip.media_reference.metadata.get("AAF", {}) \
-                                                      .get("UserComments", {}) \
-                                                      .get("UNC Path")
+        unc_path = first_clip.metadata.get("AAF", {}) \
+                                      .get("UserComments", {}) \
+                                      .get("UNC Path")
         unc_path = "file://" + unc_path
         self.assertEqual(
             first_clip.media_reference.target_url,
@@ -1110,16 +1119,20 @@ class AAFReaderTests(unittest.TestCase):
         timeline = otio.adapters.read_from_file(SUBCLIP_PATH)
         audio_track = timeline.audio_tracks()[0]
         first_clip = audio_track[0]
+        aaf_metadata = first_clip.metadata.get("AAF")
 
-        aaf_metadata = first_clip.media_reference.metadata.get("AAF")
+        expected_comp_md = {"Comments": "comment"}
+        self._verify_user_comments(aaf_metadata, expected_comp_md)
 
-        expected_md = {"Director": "director_name",
-                       "Line": "script_line",
-                       "Talent": "Speaker",
-                       "Logger": "logger",
-                       "Character": "character_name"}
+        subclip = first_clip[0][0]
+        aaf_metadata = subclip.metadata.get("AAF")
+        expected_subclip_md = {"Director": "director_name",
+                               "Line": "script_line",
+                               "Talent": "Speaker",
+                               "Logger": "logger",
+                               "Character": "character_name"}
 
-        self._verify_user_comments(aaf_metadata, expected_md)
+        self._verify_user_comments(aaf_metadata, expected_subclip_md)
 
     def test_aaf_sourcemob_usage(self):
         """
@@ -1128,12 +1141,13 @@ class AAFReaderTests(unittest.TestCase):
         """
         # `Usage_SubClip` value
         subclip_timeline = otio.adapters.read_from_file(SUBCLIP_PATH)
-        subclip_usages = {"Subclip.BREATH": "Usage_SubClip"}
-        for clip in subclip_timeline.find_clips():
-            self.assertEqual(
-                clip.metadata.get("AAF", {}).get("SourceMobUsage"),
-                subclip_usages[clip.name]
-            )
+
+        audio_track = subclip_timeline.audio_tracks()[0]
+        first_clip = audio_track[0]
+
+        self.assertEqual(
+            first_clip.metadata.get("AAF", {}).get("UsageCode"), "Usage_SubClip"
+        )
 
         # no usage value
         simple_timeline = otio.adapters.read_from_file(SIMPLE_EXAMPLE_PATH)
@@ -1146,7 +1160,7 @@ class AAFReaderTests(unittest.TestCase):
         }
         for clip in simple_timeline.find_clips():
             self.assertEqual(
-                clip.metadata.get("AAF", {}).get("SourceMobUsage", ""),
+                clip.metadata.get("AAF", {}).get("UsageCode", ""),
                 simple_usages[clip.name]
             )
 
@@ -1164,7 +1178,7 @@ class AAFReaderTests(unittest.TestCase):
         audio_track = timeline.audio_tracks()[0]
         first_clip = audio_track[0]
 
-        aaf_metadata = first_clip.media_reference.metadata.get("AAF")
+        aaf_metadata = first_clip.metadata.get("AAF")
 
         expected_md = {"Director": "director",
                        "Line": "scriptline",
@@ -1345,7 +1359,8 @@ class AAFReaderTests(unittest.TestCase):
         self.assertTrue(1 == len(timeline.tracks))
 
         track = timeline.tracks[0]
-        self.assertEqual(3, len(track.markers))
+        first_clip = track[0]
+        self.assertEqual(3, len(first_clip.markers))
 
         fps = 24.0
         expected_markers = [
@@ -1451,17 +1466,17 @@ class AAFReaderTests(unittest.TestCase):
                                                 attach_markers=True)
 
         expected_markers = {
-            (1, 'Filler'): [('PUBLISH', 0.0, 1.0, 24.0, 'RED')],
-            (1, 'zts02_1010'): [
+            (0, 'Filler'): [('PUBLISH', 0.0, 1.0, 24.0, 'RED')],
+            (0, 'zts02_1010'): [
                 ('GREEN: V1: zts02_1010: f1104: seq.f1104',
-                 1103.0, 1.0, 24.0, 'GREEN')
+                 1104.0, 1.0, 24.0, 'GREEN')
             ],
-            (2, 'ScopeReference'): [
+            (1, 'ScopeReference'): [
                 ('FX', 0.0, 1.0, 24.0, 'YELLOW'),
                 ('BLUE: V2 (no FX): zts02_1020: f1134: seq.f1327',
                  518.0, 1.0, 24.0, 'BLUE')
             ],
-            (3, 'ScopeReference'): [
+            (2, 'ScopeReference'): [
                 ('INSERT', 0.0, 1.0, 24.0, 'CYAN'),
                 ('CYAN: V3: zts02_1030: f1212: seq.f1665',
                  856.0,
@@ -1469,11 +1484,16 @@ class AAFReaderTests(unittest.TestCase):
                  24.0,
                  'CYAN')
             ],
-            (4, 'Drop_24.mov'): [
+            (3, 'Drop_24.mov'): [
                 ('MAGENTA: V4: zts02_1040: f1001: seq.f1666',
                  86400.0, 1.0, 24.0, 'MAGENTA')
             ],
-            (5, 'ScopeReference'): [
+            (3, 'Flow_07.mov'): [('GREEN: TC1: zts02_1080: f1206: seq.f2604',
+                                  -207.0,  # this marker should probably discarded?
+                                  1.0,
+                                  24.0,
+                                  'GREEN')],
+            (4, 'ScopeReference'): [
                 ('RED: V5: zts02_1050: f1061: seq.f1885',
                  884.0, 1.0, 24.0, 'RED')
             ]
@@ -2066,7 +2086,7 @@ class AAFWriterTests(unittest.TestCase):
         clip = og_aaf_tl.find_clips()[0]
 
         # change a value to test roundtrip
-        clip.media_reference.metadata["AAF"]["MobAttributeList"]["_USER_POS"] = 2
+        clip.metadata["AAF"]["MobAttributeList"]["_USER_POS"] = 2
         _, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
         otio.adapters.write_to_file(og_aaf_tl, tmp_aaf_path)
 
@@ -2081,7 +2101,7 @@ class AAFWriterTests(unittest.TestCase):
             "_USER_POS": 2,
             "_VERSION": 2
         }
-        self.assertEqual(clip.media_reference.metadata["AAF"]["MobAttributeList"],
+        self.assertEqual(clip.metadata["AAF"]["MobAttributeList"],
                          expected)
 
     def test_aaf_writer_global_start_time(self):
@@ -2464,7 +2484,7 @@ class AAFWriterTests(unittest.TestCase):
 
     def _is_otio_aaf_same(self, otio_child, aaf_component):
         if isinstance(aaf_component, SourceClip):
-            orig_mob_id = str(otio_child.metadata["AAF"]["SourceID"])
+            orig_mob_id = str(otio_child.metadata["AAF"]["MobID"])
             dest_mob_id = str(aaf_component.mob.mob_id)
             self.assertEqual(orig_mob_id, dest_mob_id)
 
@@ -2852,11 +2872,16 @@ class SimplifyTests(unittest.TestCase):
         from otio_aaf_adapter.adapters import advanced_authoring_format
         simple_tl = advanced_authoring_format._simplify(tl)
 
+        # the stack should be optimized away
         self.assertNotEqual(
             type(simple_tl.tracks[0]), otio.schema.Clip
         )
         self.assertEqual(
-            type(simple_tl.tracks[0][0]), otio.schema.Stack
+            type(simple_tl.tracks[0][0]), otio.schema.Clip
+        )
+
+        self.assertEqual(
+            type(simple_tl.tracks[1][0]), otio.schema.Clip
         )
 
     def test_simplify_stack_track_clip(self):
