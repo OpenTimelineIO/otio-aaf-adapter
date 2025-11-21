@@ -23,7 +23,7 @@ jobs:
       run: |
         python -m build
     - name: Upload Built Artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: dist
         path: |
