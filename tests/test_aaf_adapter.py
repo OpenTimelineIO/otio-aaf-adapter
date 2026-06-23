@@ -238,6 +238,10 @@ NESTED_AUDIO_DISSOLVE_PATH = os.path.join(
     SAMPLE_DATA_DIR,
     "nested_audio_dissolve.aaf"
 )
+COLORED_CLIPS_PATH = os.path.join(
+    SAMPLE_DATA_DIR,
+    "colored_clips.aaf"
+)
 
 
 try:
@@ -1851,6 +1855,28 @@ class AAFReaderTests(unittest.TestCase):
                          ["Video", "AAF_DataEssenceTrack"]
                          )
 
+    def test_clip_color(self):
+        """Test if clip color translates correctly from AAF SourceClip"""
+        timeline = otio.adapters.read_from_file(COLORED_CLIPS_PATH)
+        clips = list(timeline.find_clips())
+
+        def rgba(c):
+            return (c.r, c.g, c.b, c.a)
+
+        # named colors should round-trip with their name intact
+        self.assertEqual(clips[0].color.name, "Red")
+        self.assertEqual(rgba(clips[0].color), rgba(otio.core.Color.RED))
+        self.assertEqual(clips[1].color.name, "Green")
+        self.assertEqual(rgba(clips[1].color), rgba(otio.core.Color.GREEN))
+        self.assertEqual(clips[2].color.name, "Blue")
+        self.assertEqual(rgba(clips[2].color), rgba(otio.core.Color.BLUE))
+        self.assertEqual(clips[3].color.name, "White")
+        self.assertEqual(rgba(clips[3].color), rgba(otio.core.Color.WHITE))
+        # custom color has no named match — compare by float values from source
+        custom_color_values = [6553, 13107, 19660, 65535]
+        self.assertEqual(rgba(clips[4].color),
+                         rgba(otio.core.Color.from_int_list(custom_color_values, 16)))
+
 
 @contextlib.contextmanager
 def with_hooks_plugin_environment():
@@ -2765,6 +2791,101 @@ class AAFWriterTests(unittest.TestCase):
             aaf_clip = aaf_clips.get(ref_clip.name)
             self.assertIsNotNone(aaf_clip)
             self.assertEqual(aaf_clip.source_range, ref_clip.source_range)
+
+    def test_aaf_writer_clip_color(self):
+        """Checks if the color on the clip gets correctly translated in the AAF file."""
+
+        clip_range = otio.opentime.TimeRange(
+            start_time=otio.opentime.RationalTime(
+                value=0,
+                rate=24.0
+            ),
+            duration=otio.opentime.RationalTime(
+                value=24,
+                rate=24.0
+            )
+        )
+        media_reference = otio.schema.MissingReference(
+            available_range=clip_range
+        )
+
+        red_clip = otio.schema.Clip(
+            name="Red Clip",
+            source_range=clip_range,
+            media_reference=media_reference
+        )
+        red_clip.color = otio.core.Color.RED
+
+        green_clip = otio.schema.Clip(
+            name="Green Clip",
+            source_range=clip_range,
+            media_reference=media_reference
+        )
+        green_clip.color = otio.core.Color.GREEN
+
+        blue_clip = otio.schema.Clip(
+            name="Blue Clip",
+            source_range=clip_range,
+            media_reference=media_reference
+        )
+        blue_clip.color = otio.core.Color.BLUE
+
+        white_clip = otio.schema.Clip(
+            name="White Clip",
+            source_range=clip_range,
+            media_reference=media_reference
+        )
+        white_clip.color = otio.core.Color.WHITE
+
+        custom_clip = otio.schema.Clip(
+            name="Custom Clip Color",
+            source_range=clip_range,
+            media_reference=media_reference
+        )
+        custom_color_values = [6553, 13107, 19660, 65535]
+        custom_clip.color = otio.core.Color.from_int_list(custom_color_values, 16)
+
+        clip_list = [red_clip, green_clip, blue_clip, white_clip, custom_clip]
+        expected_color_values = [
+            clip.color.to_rgba_int_list(16) for clip in clip_list
+        ]
+        expected_attr_values = [
+            {
+                "_COLOR_R": val[0],
+                "_COLOR_G": val[1],
+                "_COLOR_B": val[2],
+            } for val in expected_color_values
+        ]
+
+        tl = otio.schema.Timeline(
+            tracks=[
+                otio.schema.Track(children=clip_list,
+                                  kind=otio.schema.TrackKind.Video)
+            ]
+        )
+
+        _, tmp_aaf_path = tempfile.mkstemp(prefix="clip_color_", suffix='.aaf')
+
+        otio.adapters.write_to_file(
+            tl,
+            filepath=tmp_aaf_path,
+            use_empty_mob_ids=True
+        )
+
+        # check of the colors are matching on the source clips
+        with aaf2.open(tmp_aaf_path) as aaf_file:
+            comp_mob = next(aaf_file.content.compositionmobs())
+            sequence = comp_mob.slots[0].segment
+            for i, source_clip in enumerate(sequence.components):
+                attr_list = source_clip["ComponentAttributeList"]
+                self.assertEqual(len(attr_list), 3)
+
+                helper = aaf2.misc.TaggedValueHelper(
+                    attr_list
+                )
+
+                for key, val in expected_attr_values[i].items():
+                    self.assertEqual(helper[key], val)
 
 
 class SimplifyTests(unittest.TestCase):
