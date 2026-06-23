@@ -64,15 +64,15 @@ jobs:
       plugin_name: "otio_aaf_plugin"
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-15]
         otio-version: ["main", "0.18.1"]
         python-version: [ "3.9", "3.10", "3.11", "3.12"]
         include:
           - { os: ubuntu-latest, shell: bash }
-          - { os: macos-latest, shell: bash }
+          - { os: macos-15, shell: bash }
           - { os: windows-latest, shell: pwsh }
         exclude:
-          - { os: macos-latest, python-version: 3.9 }
+          - { os: macos-15, python-version: 3.9 }
 
     name: ${{ matrix.os }} py-${{ matrix.python-version }} otio-${{ matrix.otio-version }}
     runs-on: ${{ matrix.os }}
