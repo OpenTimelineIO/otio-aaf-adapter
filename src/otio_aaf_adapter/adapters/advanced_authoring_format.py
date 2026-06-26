@@ -931,10 +931,16 @@ def _transcribe(item, parents, edit_rate, indent=0):
                 event_mob["PhysicalTrackNumber"].value
             )
 
-            # determine marker color
+            # determine marker color, prefer new extended color attribute
+            # if not set, read legacy attribute instead
+            marker_attributes = metadata.get("CommentMarkerAttributeList", {})
             color = _marker_color_from_string(
-                metadata.get("CommentMarkerAttributeList", {}).get("_ATN_CRM_COLOR")
+                marker_attributes.get("_ATN_CRM_COLOR_EXTENDED")
             )
+            if color is None:
+                color = _marker_color_from_string(
+                    marker_attributes.get("_ATN_CRM_COLOR")
+                )
             if color is None:
                 color = _convert_rgb_to_marker_color(
                     metadata.get("CommentMarkerColor")
@@ -2010,6 +2016,9 @@ def write_to_file(
                 result = transcriber.transcribe(otio_child)
                 if result:
                     transcriber.sequence.components.append(result)
+
+            # transcribe markers on the track (or its children)
+            transcriber.transcribe_aaf_descriptive_markers()
 
         # Always add a timecode track to the main composition mob.
         # This is required for compatibility with DaVinci Resolve.
