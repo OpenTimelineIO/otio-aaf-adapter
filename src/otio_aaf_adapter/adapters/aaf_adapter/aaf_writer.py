@@ -40,6 +40,40 @@ AAF_OPERATIONDEF_SUBMASTER = uuid.UUID("f1db0f3d-8d64-11d3-80df-006008143e6f")
 logger = logging.getLogger(__name__)
 
 
+def _physical_mob_reference(otio_clip):
+    """Return the clip's MissingReference (the physical/tape source), if any.
+
+    The AAF reader maps a locator-less physical source mob to a
+    MissingReference. When this is not the primary reference it carries
+    the original tape mob's identity (name, MobID, available range)
+    in its metadata, which is needed to	reconstruct the physical mob
+    on write and for the resulting AAF to behave identically in the
+    Avid as one produced natively.
+    """
+    active_key = otio_clip.active_media_reference_key
+    for key, ref in otio_clip.media_references().items():
+        # skip the active reference so it is not duplicated
+        if key == active_key:
+            continue
+        if isinstance(ref, otio.schema.MissingReference):
+            return ref
+    return None
+
+
+def _physical_mob_id(tape_ref):
+    """Extract the original tape mob's MobID from a MissingReference, or None."""
+    if tape_ref is None:
+        return None
+    aaf_meta = tape_ref.metadata.get("AAF", {})
+    mob_id = (aaf_meta.get("MobID") or
+              aaf_meta.get("SourceMobID") or
+              aaf_meta.get("SourceID"))
+    if not mob_id:
+        return None
+    try:
+        return aaf2.mobid.MobID(str(mob_id))
+    except Exception:
+        return None
 def _is_considered_gap(thing):
     """Returns whether or not thiing can be considered gap.
 
@@ -154,25 +188,41 @@ class AAFFileTranscriber:
         mob_id = self._clip_mob_ids_map.get(otio_clip)
         tapemob = self._unique_tapemobs.get(mob_id)
         if not tapemob:
+            # Preserve physical mobs (Avid MissingReferences) 
+            # pull the tape mob's identity (name, MobID, available range) from the
+            # MissingReference instead of the active reference on the clip
+            # The goal is to preserve the timeline's functionality when
+            # round tripping AAF -> OTIO -> AAF
+            # If no MissingReference is found will fall back to the previous
+            # behavior.
+            tape_ref = _physical_mob_reference(otio_clip)
+
+            if tape_ref is None:
+                tape_name = otio_clip.name
+                tape_range = otio_clip.media_reference.available_range
+            else:
+                tape_name = tape_ref.name or tape_name
+                if tape_ref.available_range is not None:
+                    tape_range = tape_ref.available_range
+
             tapemob = self.aaf_file.create.SourceMob()
-            tapemob.name = otio_clip.name
+            tapemob.name = tape_name
+            tape_mob_id = _physical_mob_id(tape_ref)
+            if tape_mob_id is not None:
+                tapemob.mob_id = tape_mob_id
             tapemob.descriptor = self.aaf_file.create.ImportDescriptor()
             # If the edit_rate is not an integer, we need
             # to use drop frame with a nominal integer fps.
             edit_rate = otio_clip.visible_range().duration.rate
             timecode_fps = round(edit_rate)
             tape_slot, tape_timecode_slot = tapemob.create_tape_slots(
-                otio_clip.name,
+                tape_name,
                 edit_rate=otio_clip.visible_range().duration.rate,
                 timecode_fps=round(otio_clip.visible_range().duration.rate),
                 drop_frame=(edit_rate != timecode_fps)
             )
-            timecode_start = int(
-                otio_clip.media_reference.available_range.start_time.value
-            )
-            timecode_length = int(
-                otio_clip.media_reference.available_range.duration.value
-            )
+            timecode_start = int(tape_range.start_time.value)
+            timecode_length = int(tape_range.duration.value)
 
             tape_timecode_slot.segment.start = int(timecode_start)
             tape_timecode_slot.segment.length = int(timecode_length)
@@ -180,7 +230,13 @@ class AAFFileTranscriber:
             self._unique_tapemobs[mob_id] = tapemob
 
             media = otio_clip.media_reference
-            if isinstance(media, otio.schema.ExternalReference) and media.target_url:
+            # retain the old behavior for cases where the MissingReference
+            # wasn't available
+            if (
+                tape_ref is None
+                and isinstance(media, otio.schema.ExternalReference)
+                and media.target_url
+            ):
                 locator = self.aaf_file.create.NetworkLocator()
                 locator['URLString'].value = media.target_url
                 tapemob.descriptor["Locator"].append(locator)
@@ -769,10 +825,16 @@ class _TrackTranscriber:
         """
         tapemob = self.root_file_transcriber._unique_tapemob(otio_clip)
         tapemob_slot = tapemob.create_empty_slot(self.edit_rate, self.media_kind)
-        tapemob_slot.segment.length = int(
-            otio_clip.media_reference.available_range.duration.value)
-        tapemob_slot.segment.start = int(
-            otio_clip.media_reference.available_range.start_time.value)
+
+        # Prefer the range from the tape if it is available
+        # otherwise fall back to the range on the clip's media reference
+        tape_range = otio_clip.media_reference.available_range
+        tape_ref = _physical_mob_reference(otio_clip)
+        if tape_ref is not None and tape_ref.available_range is not None:
+            tape_range = tape_ref.available_range
+
+        tapemob_slot.segment.length = int(tape_range.duration.value)
+        tapemob_slot.segment.start = int(tape_range.start_time.value)
         return tapemob, tapemob_slot
 
     def transcribe_otio_aaf_descriptor(
