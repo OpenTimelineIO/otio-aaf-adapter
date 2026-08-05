@@ -1957,6 +1957,8 @@ def write_to_file(
                 "Currently only supporting top level Timeline")
 
         default_edit_rate = None
+        track_slot_map = []
+        physical_track_numbers = {}
         for otio_track in timeline.tracks:
             # Ensure track must have clip to get the edit_rate
             if len(otio_track) == 0:
@@ -1966,10 +1968,25 @@ def write_to_file(
             if not default_edit_rate:
                 default_edit_rate = transcriber.edit_rate
 
+            # Assign a PhysicalTrackNumber per media kind (V1, V2, A1, ...), so
+            # markers written below can reference the correct track and so the
+            # reader can re-attach them to the right items.
+            kind = transcriber.media_kind
+            ptn = physical_track_numbers.get(kind, 0) + 1
+            physical_track_numbers[kind] = ptn
+            transcriber.timeline_mobslot["PhysicalTrackNumber"].value = ptn
+
             for otio_child in otio_track:
                 result = transcriber.transcribe(otio_child)
                 if result:
                     transcriber.sequence.components.append(result)
+
+            track_slot_map.append(
+                (otio_track, transcriber.timeline_mobslot.slot_id, ptn,
+                 transcriber.edit_rate))
+
+        # Write OTIO markers as DescriptiveMarkers on the composition mob.
+        otio2aaf.transcribe_markers(track_slot_map)
 
         # Always add a timecode track to the main composition mob.
         # This is required for compatibility with DaVinci Resolve.
