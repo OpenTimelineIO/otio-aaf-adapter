@@ -238,6 +238,10 @@ NESTED_AUDIO_DISSOLVE_PATH = os.path.join(
     SAMPLE_DATA_DIR,
     "nested_audio_dissolve.aaf"
 )
+AVID_STRING_BLOBS_PATH = os.path.join(
+    SAMPLE_DATA_DIR,
+    "avid_string_blobs.aaf"
+)
 
 
 try:
@@ -1850,6 +1854,42 @@ class AAFReaderTests(unittest.TestCase):
         self.assertEqual([t.kind for t in timeline.tracks],
                          ["Video", "AAF_DataEssenceTrack"]
                          )
+
+    def test_subcap_captions(self):
+        timeline = otio.adapters.read_from_file(AVID_STRING_BLOBS_PATH)
+        captions = self._effect_parameters(timeline, "SubCap")
+ 
+        expected = [
+            {"Caption": "sq010_sht010-\u00c1", "Font": "Arial"},
+            {"Caption": "sq010_sht020-\u5b8c", "Font": "Microsoft YaHei"},
+            {"Caption": "sq010_sht030", "Font": "Verdana"},
+        ]
+        self.assertEqual(len(captions), len(expected))
+ 
+        for parameters, exp in zip(captions, expected):
+            self.assertEqual(parameters["Caption"], exp["Caption"])
+            self.assertEqual(parameters["Font"], exp["Font"])
+            self.assertEqual(parameters["Publisher"], "OpenTimelineIO")
+
+    def _effect_parameters(self, timeline, effect_name):
+        """Return the AAF Parameters dict of every effect named ``effect_name``."""
+        found = []
+        for item in timeline.find_children():
+            for effect in getattr(item, "effects", None) or []:
+                aaf_metadata = effect.metadata.get("AAF", {})
+                if aaf_metadata.get("Operation", {}).get("Name") == effect_name:
+                    found.append(aaf_metadata.get("Parameters", {}))
+        return found
+
+    def test_timecode_burn_in_text_parameters(self):
+        timeline = otio.adapters.read_from_file(AVID_STRING_BLOBS_PATH)
+        burn_ins = self._effect_parameters(timeline, "Timecode Burn-In")
+        self.assertEqual(len(burn_ins), 1)
+ 
+        parameters = burn_ins[0]
+        self.assertEqual(parameters["Font"], "Arial")
+        self.assertEqual(parameters["Notes"], "Some Text")
+        self.assertEqual(parameters["NotesUTF16"], "Some Text")
 
 
 @contextlib.contextmanager

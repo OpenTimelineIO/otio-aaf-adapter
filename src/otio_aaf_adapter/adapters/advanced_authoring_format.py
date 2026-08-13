@@ -11,6 +11,8 @@ import copy
 import numbers
 import os
 import sys
+import struct
+import uuid
 
 import collections
 from typing import List
@@ -90,6 +92,103 @@ def _get_class_name(item):
     else:
         return item.__class__.__name__
 
+def _decode_avid_string_blob(value):
+    """Decode an Avid private string blob into a `str`.
+
+    Avid serializes string parameters of AVX2 plugins into an opaque byte array.
+
+    Every blob is a fixed 40-byte header, one length-prefixed chunk, a
+    terminator, and leftover heap junk:
+
+      offset  size  field            example                notes
+      ------  ----  ---------------- ---------------------  --------------------
+           0     4  magic            b"PUVA"                "AVUP" byte-swapped
+           4     4  payload_size     120                    len(blob) - 8
+           8     2  byte order mark  b"II"                  Intel = little endian
+          10     4  version          1
+          14     2  byte order mark  b"II"                  repeated
+          16    16  type GUID        72223182-aa0a-4c76...  what kind of value
+          32     4  chunk_size       10                     always str_len + 4
+          36     4  str_len          6                      size of the buffer
+          40   var  payload          b"Arial\x00"           NUL-terminated UTF-8
+         ...     1  pad              b"\x00"
+         ...     3  terminator       b"DNE"                 "END" byte-swapped
+         ...   var  junk             b"\xff\x1e\x00..."     DO NOT READ
+
+    Everything after the terminator is leftover heap memory, so the terminator 
+    must be located by arithmetic and never by searching for b"DNE".
+
+    Returns None if `value` is not a well-formed Avid string blob, in which
+    case the caller should fall back to its existing handling.
+    """
+
+    try:
+        data = bytes(bytearray(value))
+    except (TypeError, ValueError):
+        return None
+
+    AVID_BLOB_MAGIC = b"PUVA"
+    AVID_BLOB_END = b"DNE"
+    AVID_BLOB_LITTLE_ENDIAN_MARK = b"II"
+
+    # Header structure: 
+    # magic(4s), payload_size(I), bom(2s), version(I), bom2(2s), guid(16s), chunk_size(I), str_len(I)
+    HEADER_FORMAT = "4sI2sI2s16sII"
+    HEADER_SIZE = 40
+
+    # Type GUIDs observed carrying a single NUL-terminated UTF-8 string. 
+    # Other GUIDs (notably c02f2caa-7293-11d6-b4e4-0030658a6504) carry 
+    # opaque, "plugin-defined" payloads, a UTF-16 struct, a table of GUIDs, 
+    # or an embedded Marquee document. 
+    # We currently only decode the following as one string:
+    AVID_STRING_TYPE_GUIDS = frozenset([
+        # Font, most SubCap text fields
+        "72223182-aa0a-4c76-ba3d-f88c918b67b5",
+        # SubCap Caption, NotesUTF16
+        "3319f04a-ac69-4525-b9e8-2206362fd233",
+        # Notes, Custom Column Name  
+        "bac7f4c7-7eeb-4898-be2c-085f07113cc5",
+    ])
+
+
+    if not data or len(data) < HEADER_SIZE or not data.startswith(AVID_BLOB_MAGIC):
+        return None
+
+    # Byte order mark at offset 8 determines endianness ("II" = little-endian)
+    endian = "<" if data[8:10] == AVID_BLOB_LITTLE_ENDIAN_MARK else ">"
+
+    # Unpack the entire 40-byte header in one pass
+    magic, payload_size, _, _, _, guid_bytes, chunk_size, str_len = struct.unpack_from(
+        endian + HEADER_FORMAT, data
+    )
+
+    # Sanity checks: total size (payload_size + 8 byte overhead) and chunk size (str_len + 4)
+    if payload_size + 8 != len(data) or chunk_size != str_len + 4:
+        return None
+
+    # Verify type GUID is a known UTF-8 string container
+    type_guid = str(uuid.UUID(bytes_le=guid_bytes))
+    if type_guid not in AVID_STRING_TYPE_GUIDS:
+        return None
+
+    # Locate payload end and verify terminator ('DNE') within a small 4-byte window
+    payload_end = HEADER_SIZE + str_len
+    if payload_end > len(data) or AVID_BLOB_END not in data[payload_end : payload_end + 4]:
+        return None
+
+    # Extract text up to first NUL byte
+    raw_text = data[HEADER_SIZE:payload_end].split(b"\x00", 1)[0]
+
+    try:
+        text = raw_text.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+    # Reject unprintable control characters (allow tab, newline, carriage return)
+    if any(ord(c) < 0x20 and c not in "\t\n\r" for c in text):
+        return None
+
+    return text
 
 def _transcribe_property(prop, owner=None):
     if isinstance(prop, (str, numbers.Integral, float)):
@@ -101,7 +200,13 @@ def _transcribe_property(prop, owner=None):
         return result
     elif isinstance(prop, set):
         return list(prop)
+    elif isinstance(prop, (bytes, bytearray)):
+        text = _decode_avid_string_blob(prop)
+        return text if text is not None else str(prop)
     elif isinstance(prop, list):
+        text = _decode_avid_string_blob(prop)
+        if text is not None:
+            return text
         result = {}
         for child in prop:
             if hasattr(child, "name"):
