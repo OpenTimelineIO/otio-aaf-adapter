@@ -64,13 +64,18 @@ jobs:
       plugin_name: "otio_aaf_plugin"
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-15]
+        # Pinned to windows-2022 because the June 2026 migration of
+        # windows-latest to Windows Server 2025 + Visual Studio 2026 +
+        # CMake 4.3 breaks the vcpkg-based ZLIB find_package path.
+        # windows-2022 is supported by GitHub through ~2028.
+        # See: https://github.com/AcademySoftwareFoundation/OpenTimelineIO/pull/2021
+        os: [ubuntu-latest, windows-2022, macos-15]
         otio-version: ["main", "0.18.1"]
         python-version: [ "3.9", "3.10", "3.11", "3.12"]
         include:
           - { os: ubuntu-latest, shell: bash }
           - { os: macos-15, shell: bash }
-          - { os: windows-latest, shell: pwsh }
+          - { os: windows-2022, shell: pwsh }
         exclude:
           - { os: macos-15, python-version: 3.9 }
 
@@ -91,6 +96,18 @@ jobs:
         name: wheel
         path: dist/
 
+    # OTIO main builds from source and it requires ZLIB, which the vanilla Windows
+    # runners currently do not provide. Install via vcpkg and expose it. Only the
+    # 'main' path builds from source. Released OTIO versions install from wheel.
+    # See: https://github.com/AcademySoftwareFoundation/OpenTimelineIO/pull/2021
+    - name: Install ZLIB (Windows)
+      if: runner.os == 'Windows' && matrix.otio-version == 'main'
+      shell: pwsh
+      run: |
+        vcpkg install zlib:x64-windows
+        echo "CMAKE_PREFIX_PATH=C:/vcpkg/installed/x64-windows" >> $env:GITHUB_ENV
+        echo "C:/vcpkg/installed/x64-windows/bin" >> $env:GITHUB_PATH
+
     - name: Install dependencies
       shell: bash
       run: |
@@ -101,6 +118,22 @@ jobs:
         else
           pip install OpenTimelineIO>=${{ matrix.otio-version }} --only-binary :all:
         fi
+
+    # Python 3.8+ no longer searches PATH for a C-extensions dependent DLLs,
+    # so the vcpkg zlib runtime DLL must sit next to the compiled _otio.pyd.
+    # See: https://github.com/AcademySoftwareFoundation/OpenTimelineIO/pull/2021
+    - name: Copy ZLIB DLL next to _otio.pyd (Windows)
+      if: runner.os == 'Windows' && matrix.otio-version == 'main'
+      shell: pwsh
+      run: |
+        $target = python -c "import sysconfig, os; print(os.path.join(sysconfig.get_paths()['purelib'], 'opentimelineio'))"
+        $sourceDir = "C:/vcpkg/installed/x64-windows/bin"
+        Write-Host "Target: $target"
+        Write-Host "Contents of ${sourceDir}:"
+        Get-ChildItem $sourceDir -ErrorAction SilentlyContinue | ForEach-Object { Write-Host " $($_.Name)" }
+        Copy-Item "$sourceDir/*.dll" "$target/" -ErrorAction Stop
+        Write-Host "DLLs now in ${target}:"
+        Get-ChildItem "$target/*.dll" | ForEach-Object { Write-Host " $($_.Name)" }
 
     - name: Run Unit Tests
       shell: bash

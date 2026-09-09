@@ -59,7 +59,7 @@ def run_pre_read_transcribe_hook(
     to OTIO data. It can be useful to manipulate the AAF data directly before the
     transcribing occurs. The hook doesn't return a timeline, since it runs before the
     Timeline object has been transcribed."""
-    if HOOK_PRE_WRITE_TRANSCRIBE in otio.hooks.names():
+    if HOOK_PRE_READ_TRANSCRIBE in otio.hooks.names():
         extra_kwargs.update({
             "read_filepath": read_filepath,
             "aaf_handle": aaf_handle,
@@ -77,12 +77,12 @@ def run_post_read_transcribe_hook(
     but before it is simplified. Possible use cases could be logic to extract and
     transcode media from the AAF.
     """
-    if HOOK_POST_WRITE_TRANSCRIBE in otio.hooks.names():
+    if HOOK_POST_READ_TRANSCRIBE in otio.hooks.names():
         extra_kwargs.update({
             "read_filepath": read_filepath,
             "aaf_handle": aaf_handle
         })
-        return otio.hooks.run(HOOK_POST_WRITE_TRANSCRIBE,
+        return otio.hooks.run(HOOK_POST_READ_TRANSCRIBE,
                               tl=timeline,
                               extra_args=extra_kwargs)
     return timeline

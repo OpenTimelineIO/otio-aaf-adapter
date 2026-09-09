@@ -1369,17 +1369,17 @@ class AAFReaderTests(unittest.TestCase):
         fps = 24.0
         expected_markers = [
             {
-                'color': 'RED',
+                'color': otio.schema.MarkerColor.RED,
                 'label': 'm1',
                 'start_time': otio.opentime.from_frames(50.0, fps)
             },
             {
-                'color': 'GREEN',
+                'color': otio.schema.MarkerColor.GREEN,
                 'label': 'm2',
                 'start_time': otio.opentime.from_frames(103.0, fps)
             },
             {
-                'color': 'BLUE',
+                'color': otio.schema.MarkerColor.BLUE,
                 'label': 'm3',
                 'start_time': otio.opentime.from_frames(166.0, fps)
             }
@@ -1469,37 +1469,38 @@ class AAFReaderTests(unittest.TestCase):
         timeline = otio.adapters.read_from_file(MULTIPLE_MARKERS_PATH,
                                                 attach_markers=True)
 
+        Color = otio.schema.MarkerColor
         expected_markers = {
-            (0, 'Filler'): [('PUBLISH', 0.0, 1.0, 24.0, 'RED')],
+            (0, 'Filler'): [('PUBLISH', 0.0, 1.0, 24.0, Color.RED)],
             (0, 'zts02_1010'): [
                 ('GREEN: V1: zts02_1010: f1104: seq.f1104',
-                 1104.0, 1.0, 24.0, 'GREEN')
+                 1104.0, 1.0, 24.0, Color.GREEN)
             ],
             (1, 'ScopeReference'): [
-                ('FX', 0.0, 1.0, 24.0, 'YELLOW'),
+                ('FX', 0.0, 1.0, 24.0, Color.YELLOW),
                 ('BLUE: V2 (no FX): zts02_1020: f1134: seq.f1327',
-                 518.0, 1.0, 24.0, 'BLUE')
+                 518.0, 1.0, 24.0, Color.BLUE)
             ],
             (2, 'ScopeReference'): [
-                ('INSERT', 0.0, 1.0, 24.0, 'CYAN'),
+                ('INSERT', 0.0, 1.0, 24.0, Color.CYAN),
                 ('CYAN: V3: zts02_1030: f1212: seq.f1665',
                  856.0,
                  1.0,
                  24.0,
-                 'CYAN')
+                 Color.CYAN)
             ],
             (3, 'Drop_24.mov'): [
                 ('MAGENTA: V4: zts02_1040: f1001: seq.f1666',
-                 86400.0, 1.0, 24.0, 'MAGENTA')
+                 86400.0, 1.0, 24.0, Color.MAGENTA)
             ],
             (3, 'Flow_07.mov'): [('GREEN: TC1: zts02_1080: f1206: seq.f2604',
                                   -207.0,  # this marker should probably discarded?
                                   1.0,
                                   24.0,
-                                  'GREEN')],
+                                  Color.GREEN)],
             (4, 'ScopeReference'): [
                 ('RED: V5: zts02_1050: f1061: seq.f1885',
-                 884.0, 1.0, 24.0, 'RED')
+                 884.0, 1.0, 24.0, Color.RED)
             ]
         }
 
@@ -2550,7 +2551,7 @@ class AAFWriterTests(unittest.TestCase):
                     otio.plugins.plugin_info_map()["hooks"]
                 )
 
-    def test_transcribe_hook_args_map(self):
+    def test_transcribe_write_hook_args_map(self):
         """Tests if extra arguments are correctly passed to the hooks.
         """
 
@@ -2575,6 +2576,26 @@ class AAFWriterTests(unittest.TestCase):
                         filepath=tmp_aaf_path,
                         embed_essence=True,
                         use_empty_mob_ids=True,
+                        hook_function_argument_map={
+                            "test_post_hook_raise": True
+                        }
+                    )
+
+    def test_transcribe_read_hook_args_map(self):
+        """Tests if extra arguments are correctly passed to the read hooks."""
+        if otio.adapters.from_name("AAF").has_feature("hooks"):
+            with with_hooks_plugin_environment():
+                with self.assertRaises(AAFAdapterError):
+                    otio.adapters.read_from_file(
+                        SIMPLE_EXAMPLE_PATH,
+                        hook_function_argument_map={
+                            "test_pre_hook_raise": True
+                        }
+                    )
+
+                with self.assertRaises(AAFAdapterError):
+                    otio.adapters.read_from_file(
+                        SIMPLE_EXAMPLE_PATH,
                         hook_function_argument_map={
                             "test_post_hook_raise": True
                         }
