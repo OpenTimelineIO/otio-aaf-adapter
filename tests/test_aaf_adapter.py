@@ -15,7 +15,9 @@ from pathlib import Path
 import opentimelineio as otio
 from otio_aaf_adapter.adapters.aaf_adapter.aaf_writer import (
     AAFAdapterError,
-    AAFValidationError
+    AAFValidationError,
+    AAF_DATAESSENCE_MEDIA_KIND,
+    AAF_DATAESSENCE_TRACK_KIND,
 )
 from otio_aaf_adapter.adapters.aaf_adapter import hooks
 
@@ -3014,6 +3016,102 @@ class AAFWriterTests(unittest.TestCase):
                     attrs["_ATN_CRM_COLOR"], legacy_fallback[extended_name]
                 )
                 self.assertIsNotNone(marker["CommentMarkerColorExtended"].value)
+
+    def test_aaf_writer_data_track_marker_roundtrip(self):
+        """Markers on an Avid data track (DataEssenceTrack) survive a round-trip.
+        """
+        fps = 24
+        rng = otio.opentime.TimeRange(
+            otio.opentime.RationalTime(0, fps),
+            otio.opentime.RationalTime(25, fps),
+        )
+
+        timeline = otio.schema.Timeline(name="data_track_markers")
+        video = otio.schema.Track(kind=otio.schema.TrackKind.Video)
+        video.append(otio.schema.Clip(
+            name="vclip", source_range=rng,
+            media_reference=otio.schema.ExternalReference(available_range=rng),
+        ))
+        timeline.tracks.append(video)
+
+        data_track = otio.schema.Track(
+            kind=AAF_DATAESSENCE_TRACK_KIND
+        )
+        gap = otio.schema.Gap(source_range=rng)
+        expected = {
+            "Red note": (otio.schema.MarkerColor.RED, 3),
+            "Blue note": (otio.schema.MarkerColor.BLUE, 5),
+            "Magenta note": (otio.schema.MarkerColor.MAGENTA, 7),
+        }
+        for name, (color, frame) in expected.items():
+            gap.markers.append(otio.schema.Marker(
+                name=name, color=color,
+                marked_range=otio.opentime.TimeRange(
+                    otio.opentime.RationalTime(frame, fps),
+                    otio.opentime.RationalTime(1, fps),
+                ),
+            ))
+        data_track.append(gap)
+        timeline.tracks.append(data_track)
+
+        _, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
+        otio.adapters.write_to_file(timeline, tmp_aaf_path, use_empty_mob_ids=True)
+        result = otio.adapters.read_from_file(tmp_aaf_path)
+
+        self.assertEqual(
+            [t.kind for t in result.tracks],
+            ["Video", AAF_DATAESSENCE_TRACK_KIND],
+        )
+
+        # markers land on the data track's Gap, correct name/color/position
+        data_gap = result.tracks[1][0]
+        self.assertEqual(type(data_gap), otio.schema.Gap)
+        markers = {m.name: m for m in data_gap.markers}
+        self.assertEqual(set(markers), set(expected))
+        for name, (color, frame) in expected.items():
+            with self.subTest(marker=name):
+                self.assertEqual(markers[name].color, color)
+                self.assertEqual(
+                    markers[name].marked_range.start_time,
+                    otio.opentime.RationalTime(frame, fps),
+                )
+
+        # AAF structure: DataEssenceTrack slot + EventMobSlot of 3 markers
+        with aaf2.open(tmp_aaf_path) as aaf_file:
+            comp_mob = next(aaf_file.content.toplevel())
+            data_slots = [
+                slot for slot in comp_mob.slots
+                if slot.segment.media_kind == AAF_DATAESSENCE_MEDIA_KIND
+            ]
+            self.assertEqual(len(data_slots), 1)
+
+            aaf_markers = [
+                comp
+                for slot in comp_mob.slots
+                if isinstance(slot, aaf2.mobslots.EventMobSlot)
+                for comp in slot.segment.components
+            ]
+            self.assertEqual(len(aaf_markers), 3)
+
+    def test_aaf_writer_data_track_rejects_clip(self):
+        """A data track may only carry gaps and markers, not clips."""
+        rng = otio.opentime.TimeRange(
+            otio.opentime.RationalTime(0, 24),
+            otio.opentime.RationalTime(25, 24),
+        )
+        timeline = otio.schema.Timeline(name="bad_data_track")
+        data_track = otio.schema.Track(
+            kind=AAF_DATAESSENCE_TRACK_KIND
+        )
+        data_track.append(otio.schema.Clip(
+            name="you shall not translate", source_range=rng,
+            media_reference=otio.schema.ExternalReference(available_range=rng),
+        ))
+        timeline.tracks.append(data_track)
+
+        _, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
+        with self.assertRaises(otio.exceptions.NotSupportedError):
+            otio.adapters.write_to_file(timeline, tmp_aaf_path, use_empty_mob_ids=True)
 
 
 class SimplifyTests(unittest.TestCase):

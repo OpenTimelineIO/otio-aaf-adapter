@@ -39,6 +39,12 @@ AAF_PARAMETERDEF_LEVEL = uuid.UUID("e4962320-2267-11d3-8a4c-0050040ef7d2")
 AAF_VVAL_EXTRAPOLATION_ID = uuid.UUID("0e24dd54-66cd-4f1a-b0a0-670ac3a7a0b3")
 AAF_OPERATIONDEF_SUBMASTER = uuid.UUID("f1db0f3d-8d64-11d3-80df-006008143e6f")
 
+# Avid data track definitions
+# Reader translates via f"AAF_{media_kind}", keep in sync with writer.
+AAF_DATAESSENCE_DATADEF_AUID = "01030202-0300-0000-060e-2b3404010101"
+AAF_DATAESSENCE_MEDIA_KIND = "DataEssenceTrack"
+AAF_DATAESSENCE_TRACK_KIND = f"AAF_{AAF_DATAESSENCE_MEDIA_KIND}"
+
 logger = logging.getLogger(__name__)
 
 
@@ -130,6 +136,26 @@ def _register_marker_extended_color(aaf_file):
         False,
         False,
     )
+
+
+def _register_dataessence_datadef(aaf_file):
+    """Register the DataEssenceTrack DataDef (no-op if present).
+
+    Current pyaaf2 (<=1.7.1) does not ship with a definition for Avids data tracks yet.
+    Check if the definition is present, and if not, register it.
+    """
+    try:
+        aaf_file.dictionary.lookup_datadef(AAF_DATAESSENCE_MEDIA_KIND)
+        return
+    except Exception:
+        # not registered
+        pass
+
+    # register the DataEssenceTrack DataDef
+    datadef = aaf_file.create.DataDef(
+        AAF_DATAESSENCE_DATADEF_AUID, AAF_DATAESSENCE_MEDIA_KIND
+    )
+    aaf_file.dictionary.register_def(datadef)
 
 
 def _is_considered_gap(thing):
@@ -293,6 +319,10 @@ class AAFFileTranscriber:
             transcriber = AudioTrackTranscriber(self, otio_track,
                                                 embed_essence=self.embed_essence,
                                                 create_edgecode=self.create_edgecode)
+        elif otio_track.kind == AAF_DATAESSENCE_TRACK_KIND:
+            transcriber = DataTrackTranscriber(self, otio_track,
+                                               embed_essence=self.embed_essence,
+                                               create_edgecode=self.create_edgecode)
         else:
             raise otio.exceptions.NotSupportedError(
                 f"Unsupported track kind: {otio_track.kind}")
@@ -1457,6 +1487,64 @@ class AudioTrackTranscriber(_TrackTranscriber):
             self.aaf_file.dictionary.lookup_parameterdef("ParameterDef_Level"))
 
         return [param_def_level], level
+
+
+class DataTrackTranscriber(_TrackTranscriber):
+    """Data essence track specialization of TrackTranscriber.
+
+    Counterintuitively, the data track has no essence itself.
+    It is optional and used to store markers and other metadata in some pipelines.
+    There can be only one data track per composition mob.
+    """
+
+    @property
+    def media_kind(self):
+        return AAF_DATAESSENCE_MEDIA_KIND
+
+    @property
+    def _aaf_physical_track_number(self) -> int:
+        data_tracks = [track for track in self.otio_track.parent()
+                       if track.kind == AAF_DATAESSENCE_TRACK_KIND]
+        return data_tracks.index(self.otio_track) + 1
+
+    def _create_timeline_mobslot(self):
+        """
+        Create a Sequence container (TimelineMobSlot) and Sequence.
+
+        TimelineMobSlot --> Sequence
+        """
+        _register_dataessence_datadef(self.aaf_file)
+        timeline_mobslot = self.compositionmob.create_timeline_slot(
+            edit_rate=self.edit_rate)
+        sequence = self.aaf_file.create.Sequence(media_kind=self.media_kind)
+        sequence.components.value = []
+        timeline_mobslot.segment = sequence
+        return timeline_mobslot, sequence
+
+    def transcribe(self, otio_child):
+        if _is_considered_gap(otio_child):
+            return self.aaf_filler(otio_child)
+        raise otio.exceptions.NotSupportedError(
+            "Data essence tracks may only contain gaps and markers. "
+            f"Unsupported child: {otio_child.name} ({type(otio_child).__name__})")
+
+    # A data track carries no essence, so these are unreachable given transcribe().
+    @property
+    def _master_mob_slot_id(self):
+        raise otio.exceptions.NotSupportedError(
+            "Data essence tracks have no master mobs")
+
+    def default_descriptor(self, otio_clip):
+        raise otio.exceptions.NotSupportedError(
+            "Data essence tracks do not support essence descriptors")
+
+    def _transition_parameters(self):
+        raise otio.exceptions.NotSupportedError(
+            "Data essence tracks do not support transitions")
+
+    def _import_essence_for_clip(self, otio_clip, essence_path):
+        raise otio.exceptions.NotSupportedError(
+            "Data essence tracks do not support media essence embedding")
 
 
 class __check:
