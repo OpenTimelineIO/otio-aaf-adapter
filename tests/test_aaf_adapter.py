@@ -2525,7 +2525,7 @@ class AAFWriterTests(unittest.TestCase):
                     otio.plugins.plugin_info_map()["hooks"]
                 )
 
-    def test_transcribe_hook_args_map(self):
+    def test_transcribe_write_hook_args_map(self):
         """Tests if extra arguments are correctly passed to the hooks.
         """
 
@@ -2550,6 +2550,26 @@ class AAFWriterTests(unittest.TestCase):
                         filepath=tmp_aaf_path,
                         embed_essence=True,
                         use_empty_mob_ids=True,
+                        hook_function_argument_map={
+                            "test_post_hook_raise": True
+                        }
+                    )
+
+    def test_transcribe_read_hook_args_map(self):
+        """Tests if extra arguments are correctly passed to the read hooks."""
+        if otio.adapters.from_name("AAF").has_feature("hooks"):
+            with with_hooks_plugin_environment():
+                with self.assertRaises(AAFAdapterError):
+                    otio.adapters.read_from_file(
+                        SIMPLE_EXAMPLE_PATH,
+                        hook_function_argument_map={
+                            "test_pre_hook_raise": True
+                        }
+                    )
+
+                with self.assertRaises(AAFAdapterError):
+                    otio.adapters.read_from_file(
+                        SIMPLE_EXAMPLE_PATH,
                         hook_function_argument_map={
                             "test_post_hook_raise": True
                         }
