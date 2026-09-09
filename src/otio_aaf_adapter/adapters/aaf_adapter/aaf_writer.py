@@ -40,6 +40,58 @@ AAF_OPERATIONDEF_SUBMASTER = uuid.UUID("f1db0f3d-8d64-11d3-80df-006008143e6f")
 logger = logging.getLogger(__name__)
 
 
+# 16-bit RGB values for OTIO marker colors, used when an authored marker has no
+# preserved AAF CommentMarkerColor metadata to round-trip.
+# it's unclear why Avid needs 16 bits of precision to encode the color of a marker
+# but ok
+_MARKER_COLOR_RGB = {
+    otio.schema.MarkerColor.RED: {"red": 65535, "green": 0, "blue": 0},
+    otio.schema.MarkerColor.GREEN: {"red": 0, "green": 65535, "blue": 0},
+    otio.schema.MarkerColor.BLUE: {"red": 0, "green": 0, "blue": 65535},
+    otio.schema.MarkerColor.CYAN: {"red": 0, "green": 65535, "blue": 65535},
+    otio.schema.MarkerColor.MAGENTA: {"red": 65535, "green": 0, "blue": 65535},
+    otio.schema.MarkerColor.YELLOW: {"red": 65535, "green": 65535, "blue": 0},
+    otio.schema.MarkerColor.PURPLE: {"red": 32768, "green": 0, "blue": 65535},
+    otio.schema.MarkerColor.ORANGE: {"red": 65535, "green": 32768, "blue": 0},
+    otio.schema.MarkerColor.PINK: {"red": 65535, "green": 32768, "blue": 32768},
+    otio.schema.MarkerColor.BLACK: {"red": 0, "green": 0, "blue": 0},
+    otio.schema.MarkerColor.WHITE: {"red": 65535, "green": 65535, "blue": 65535},
+}
+
+
+def _marker_rgb(marker):
+    """Return a 16-bit RGB dict for an OTIO marker.
+
+    Use the original value from AAF metadata CommentMarkerColor if available
+    and otherwise use the color map above so marker colors using the OTIO default enums
+    will get a sensible color.
+    """
+    rgb = marker.metadata.get("AAF", {}).get("CommentMarkerColor")
+    if rgb:
+        return dict(rgb)
+    return _MARKER_COLOR_RGB.get(marker.color)
+
+
+def _iter_track_markers(otio_track):
+    """Yield (marker, owning_item) for markers on a track and its descendants."""
+    for marker in otio_track.markers:
+        yield marker, otio_track
+    for child in otio_track.find_children():
+        for marker in getattr(child, "markers", []):
+            yield marker, child
+
+
+def _marker_position_frames(marker, owning_item, otio_track, edit_rate):
+    """
+    Marker start position in the track's slot coordinate space, in frames, recomputed from the current timeline geometry
+    """
+    start = marker.marked_range.start_time
+    if owning_item is not otio_track:
+        # transform from the owning item's space up into the track's space
+        start = owning_item.transformed_time(start, otio_track)
+    return int(round(start.rescaled_to(edit_rate).value))
+
+
 def _is_considered_gap(thing):
     """Returns whether or not thiing can be considered gap.
 
@@ -229,6 +281,64 @@ class AAFFileTranscriber:
         timecode.drop = False
         timecode.start = start
         slot.segment = timecode
+
+    def transcribe_markers(self, track_slot_map):
+        """Write OTIO markers as AAF DescriptiveMarkers on the composition mob.
+
+        OTIO markers are children of timeline items (clips, gaps, tracks); AAF stores
+        them as DescriptiveMarker components inside EventMobSlots on the
+        composition mob, referencing the described timeline slot. For each track
+        with markers, create one EventMobSlot whose PhysicalTrackNumber matches
+        the track, so the reader can re-attach the markers to the correct items.
+
+        Args:
+            track_slot_map: list of
+                ``(otio_track, slot_id, physical_track_number, edit_rate)``
+        """
+        datadef = self.aaf_file.dictionary.lookup_datadef(
+            "DataDef_DescriptiveMetadata")
+
+        existing_ids = [s.slot_id for s in self.compositionmob.slots
+                        if s.slot_id is not None]
+        next_slot_id = (max(existing_ids) if existing_ids else 0) + 1
+
+        for otio_track, slot_id, ptn, edit_rate in track_slot_map:
+            markers = list(_iter_track_markers(otio_track))
+            if not markers:
+                continue
+
+            sequence = self.aaf_file.create.Sequence(
+                media_kind="DescriptiveMetadata")
+            sequence.components.value = []
+
+            for marker, owning_item in markers:
+                position = _marker_position_frames(
+                    marker, owning_item, otio_track, edit_rate)
+
+                aaf_md = marker.metadata.get("AAF", {})
+                length = aaf_md.get("Length")
+                if not length:
+                    length = int(round(marker.marked_range.duration.value)) or 1
+
+                dm = self.aaf_file.create.DescriptiveMarker()
+                dm["DataDefinition"].value = datadef
+                dm["Length"].value = int(length)
+                dm["Position"].value = int(position)
+                dm["Comment"].value = marker.name or aaf_md.get("Comment") or ""
+                dm["DescribedSlots"].value = [int(slot_id)]
+
+                rgb = _marker_rgb(marker)
+                if rgb:
+                    dm["CommentMarkerColor"].value = rgb
+
+                sequence.components.append(dm)
+
+            event_slot = self.aaf_file.create.EventMobSlot(
+                slot_id=next_slot_id, segment=sequence)
+            event_slot.edit_rate = edit_rate
+            event_slot["PhysicalTrackNumber"].value = int(ptn)
+            self.compositionmob.slots.append(event_slot)
+            next_slot_id += 1
 
     def _transcribe_user_comments(self, otio_item, target_mob):
         """Transcribes user comments on `otio_item` onto `target_mob` in AAF."""
