@@ -294,6 +294,22 @@ def _convert_rgb_to_marker_color(rgb_dict):
     return nearest or otio.schema.MarkerColor.RED
 
 
+def _resolve_named_colors(color: otio.core.Color) -> otio.core.Color:
+    """Return the matching named otio.core.Color instance for the given color,
+    or the original color if no exact RGB match exists."""
+    _NAMED_COLORS: list[otio.core.Color] = [
+        otio.core.Color.RED, otio.core.Color.GREEN, otio.core.Color.BLUE,
+        otio.core.Color.CYAN, otio.core.Color.MAGENTA, otio.core.Color.YELLOW,
+        otio.core.Color.ORANGE, otio.core.Color.PINK, otio.core.Color.PURPLE,
+        otio.core.Color.WHITE, otio.core.Color.BLACK,
+    ]
+
+    for named in _NAMED_COLORS:
+        if named.r == color.r and named.g == color.g and named.b == color.b:
+            return named
+    return color
+
+
 def _add_child(parent, child, source):
     if child is None:
         if debug:
@@ -674,6 +690,25 @@ def _transcribe(item, parents, edit_rate, indent=0):
             duration
         )
 
+        # read clip color from this source clip's ComponentAttributeList
+        _clip_color = None
+        if "ComponentAttributeList" in item:
+            _comp_clip_attrs = aaf2.misc.TaggedValueHelper(
+                item["ComponentAttributeList"]
+            )
+            if "_COLOR_R" in _comp_clip_attrs:
+                _clip_color = _resolve_named_colors(
+                    otio.core.Color.from_int_list(
+                        [
+                            _comp_clip_attrs["_COLOR_R"],
+                            _comp_clip_attrs["_COLOR_G"],
+                            _comp_clip_attrs["_COLOR_B"],
+                            65535,
+                        ],
+                        16,
+                    )
+                )
+
         # find the source clip slot track
         if isinstance(mob, (aaf2.mobs.MasterMob, aaf2.mobs.CompositionMob)):
             mob_timeline = _transcribe(mob, list(), edit_rate, indent + 2)
@@ -743,6 +778,11 @@ def _transcribe(item, parents, edit_rate, indent=0):
             _transcribe_log(f"Creating Track for {_encoded_name(item)}", indent)
             result = slot_track
             result.source_range = source_range
+
+            # set clip color on clip if track has a clip and a clip color was found
+            clip = next(iter(result.find_clips()), None)
+            if _clip_color and clip:
+                clip.color = _clip_color
 
     elif isinstance(item, aaf2.components.Transition):
         _transcribe_log("Creating Transition for {}".format(

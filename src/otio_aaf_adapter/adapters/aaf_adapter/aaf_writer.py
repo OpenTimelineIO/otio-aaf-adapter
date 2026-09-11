@@ -626,6 +626,16 @@ class _TrackTranscriber:
         compmob_clip.slot = mastermob_slot
         compmob_clip.slot_id = mastermob_slot.slot_id
 
+        # convert OTIO color to uint 16bit and store in source clip attributes
+        if otio_clip.color is not None:
+            red_val, green_val, blue_val, _ = otio_clip.color.to_rgba_int_list(16)
+            mob_attr_list = aaf2.misc.TaggedValueHelper(
+                compmob_clip['ComponentAttributeList']
+            )
+            mob_attr_list["_COLOR_R"] = red_val
+            mob_attr_list["_COLOR_G"] = green_val
+            mob_attr_list["_COLOR_B"] = blue_val
+
         # create edgecode for Avid Frame Count properties
         if self.create_edgecode:
             ec_tl_slot = self._create_edgecode_timeline_slot(
