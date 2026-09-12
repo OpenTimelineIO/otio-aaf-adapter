@@ -1469,38 +1469,37 @@ class AAFReaderTests(unittest.TestCase):
         timeline = otio.adapters.read_from_file(MULTIPLE_MARKERS_PATH,
                                                 attach_markers=True)
 
-        Color = otio.schema.MarkerColor
         expected_markers = {
-            (0, 'Filler'): [('PUBLISH', 0.0, 1.0, 24.0, Color.RED)],
+            (0, 'Filler'): [('PUBLISH', 0.0, 1.0, 24.0, 'RED')],
             (0, 'zts02_1010'): [
                 ('GREEN: V1: zts02_1010: f1104: seq.f1104',
-                 1104.0, 1.0, 24.0, Color.GREEN)
+                 1104.0, 1.0, 24.0, 'GREEN')
             ],
             (1, 'ScopeReference'): [
-                ('FX', 0.0, 1.0, 24.0, Color.YELLOW),
+                ('FX', 0.0, 1.0, 24.0, 'YELLOW'),
                 ('BLUE: V2 (no FX): zts02_1020: f1134: seq.f1327',
-                 518.0, 1.0, 24.0, Color.BLUE)
+                 518.0, 1.0, 24.0, 'BLUE')
             ],
             (2, 'ScopeReference'): [
-                ('INSERT', 0.0, 1.0, 24.0, Color.CYAN),
+                ('INSERT', 0.0, 1.0, 24.0, 'CYAN'),
                 ('CYAN: V3: zts02_1030: f1212: seq.f1665',
                  856.0,
                  1.0,
                  24.0,
-                 Color.CYAN)
+                 'CYAN')
             ],
             (3, 'Drop_24.mov'): [
                 ('MAGENTA: V4: zts02_1040: f1001: seq.f1666',
-                 86400.0, 1.0, 24.0, Color.MAGENTA)
+                 86400.0, 1.0, 24.0, 'MAGENTA')
             ],
             (3, 'Flow_07.mov'): [('GREEN: TC1: zts02_1080: f1206: seq.f2604',
                                   -207.0,  # this marker should probably discarded?
                                   1.0,
                                   24.0,
-                                  Color.GREEN)],
+                                  'GREEN')],
             (4, 'ScopeReference'): [
                 ('RED: V5: zts02_1050: f1061: seq.f1885',
-                 884.0, 1.0, 24.0, Color.RED)
+                 884.0, 1.0, 24.0, 'RED')
             ]
         }
 
@@ -1515,7 +1514,14 @@ class AAFReaderTests(unittest.TestCase):
                         m.marked_range.start_time.value,
                         m.marked_range.duration.value,
                         m.marked_range.start_time.rate,
-                        m.color
+
+                        # marker.color is an upper-case name string in
+                        # OTIO <= 0.18.1 and a title-case formatted name string
+                        # starting with
+                        # https://github.com/AcademySoftwareFoundation/OpenTimelineIO/pull/2023
+                        # Compare on the upper-cased name so the test works for both
+                        m.color.name.upper() if isinstance(m.color, otio.core.Color)
+                        else m.color
                     ) for m in item.markers
                 ]
                 if markers:
@@ -2907,6 +2913,107 @@ class AAFWriterTests(unittest.TestCase):
 
                 for key, val in expected_attr_values[i].items():
                     self.assertEqual(helper[key], val)
+
+    def test_aaf_writer_marker_roundtrip(self):
+        """Markers survive write -> read AAF round-trip.
+        """
+        clip_fps = 24
+        clip_dur = otio.opentime.RationalTime(100, clip_fps)
+
+        def _clip(name, marked_frame, color):
+            range = otio.opentime.TimeRange(
+                otio.opentime.RationalTime(0, clip_fps), clip_dur
+            )
+            clip = otio.schema.Clip(
+                name=name,
+                source_range=range,
+                media_reference=otio.schema.ExternalReference(available_range=range),
+            )
+            if marked_frame is not None:
+                clip.markers.append(otio.schema.Marker(
+                    name=f"note on {name}",
+                    color=color,
+                    marked_range=otio.opentime.TimeRange(
+                        start_time=otio.opentime.RationalTime(marked_frame, clip_fps),
+                        duration=otio.opentime.RationalTime(1, clip_fps),
+                    ),
+                ))
+            return clip
+
+        # two video tracks, markers on V1 clip[1] and V2 clip[0], one clip unmarked.
+        timeline = otio.schema.Timeline()
+        timeline.tracks.append(otio.schema.Track(children=[
+            _clip("V1-a", None, None),
+            _clip("V1-b", 5, otio.schema.MarkerColor.PINK),
+        ]))
+        timeline.tracks.append(otio.schema.Track(children=[
+            _clip("V2-a", 10, otio.schema.MarkerColor.PURPLE),
+            _clip("V2-b", None, None),
+        ]))
+
+        _, tmp_aaf_path = tempfile.mkstemp(suffix='.aaf')
+        otio.adapters.write_to_file(timeline, tmp_aaf_path, use_empty_mob_ids=True)
+        result = otio.adapters.read_from_file(tmp_aaf_path)
+
+        markers_by_clip = {
+            clip.name: clip.markers
+            for clip in result.find_clips() if clip.markers
+        }
+
+        # only the two marked clips carry a marker
+        self.assertEqual(set(markers_by_clip), {"V1-b", "V2-a"})
+
+        expected = {
+            "V1-b": ("note on V1-b", otio.schema.MarkerColor.PINK, 5),
+            "V2-a": ("note on V2-a", otio.schema.MarkerColor.PURPLE, 10),
+        }
+
+        # parameterize the subtests to make it easier to see which clip fails
+        for clip_name, (name, color, frame) in expected.items():
+            with self.subTest(clip=clip_name):
+                self.assertEqual(len(markers_by_clip[clip_name]), 1)
+                marker = markers_by_clip[clip_name][0]
+
+                self.assertEqual(marker.name, name)
+                self.assertEqual(marker.color, color)
+
+                # markers are a single frame and keep their position
+                self.assertEqual(
+                    marker.marked_range.start_time,
+                    otio.opentime.RationalTime(frame, clip_fps),
+                )
+
+                self.assertEqual(
+                    marker.marked_range.duration,
+                    otio.opentime.RationalTime(1, clip_fps),
+                )
+
+        # Check if attributes are correctly translated into AAF
+        with aaf2.open(tmp_aaf_path) as aaf_file:
+            markers = [
+                comp
+                for mob in aaf_file.content.mobs
+                for slot in mob.slots
+                if isinstance(slot, aaf2.mobslots.EventMobSlot)
+                for comp in slot.segment.components
+            ]
+            self.assertEqual(len(markers), 2)
+
+            # extended name -> legacy fallback name, for the colors used above
+            legacy_fallback = {"Pink": "Magenta", "Purple": "Blue"}
+
+            for marker in markers:
+                attrs = {tv.name: tv.value
+                         for tv in marker["CommentMarkerAttributeList"].value}
+                self.assertGreater(attrs["_ATN_CRM_LONG_CREATE_DATE"], 0)
+                self.assertGreater(attrs["_ATN_CRM_LONG_MOD_DATE"], 0)
+                self.assertEqual(attrs["_ATN_CRM_MARKNAME"], marker["Comment"].value)
+                extended_name = attrs["_ATN_CRM_COLOR_EXTENDED"]
+                self.assertIn(extended_name, legacy_fallback)
+                self.assertEqual(
+                    attrs["_ATN_CRM_COLOR"], legacy_fallback[extended_name]
+                )
+                self.assertIsNotNone(marker["CommentMarkerColorExtended"].value)
 
 
 class SimplifyTests(unittest.TestCase):

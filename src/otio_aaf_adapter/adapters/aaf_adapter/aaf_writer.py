@@ -15,6 +15,8 @@ from numbers import Rational
 import aaf2
 import aaf2.mobs
 import abc
+import datetime
+import getpass
 import uuid
 import opentimelineio as otio
 import os
@@ -22,7 +24,7 @@ import copy
 import re
 import logging
 
-from typing import Dict, Any
+from typing import Dict, Any, NamedTuple
 
 
 AAF_PARAMETERDEF_PAN = aaf2.auid.AUID("e4962322-2267-11d3-8a4c-0050040ef7d2")
@@ -38,6 +40,96 @@ AAF_VVAL_EXTRAPOLATION_ID = uuid.UUID("0e24dd54-66cd-4f1a-b0a0-670ac3a7a0b3")
 AAF_OPERATIONDEF_SUBMASTER = uuid.UUID("f1db0f3d-8d64-11d3-80df-006008143e6f")
 
 logger = logging.getLogger(__name__)
+
+
+class _MarkerColor(NamedTuple):
+    """An OTIO marker color translated to both of Avids marker color systems.
+
+    Avid stores two color encodings on every marker: a legacy one limited to 8
+    colors (`CommentMarkerColor` / `_ATN_CRM_COLOR`) and a newer extended one with 16
+    colors (`CommentMarkerColorExtended` / `_ATN_CRM_COLOR_EXTENDED`). An extended
+    color that is not one of the 8 legacy colors falls back to a legacy color
+    if required.
+
+    There is five colors (Forest, Denim, Violet, Grey, Gold) exclusive to the Avid
+    so we currently do not handle them in the writer translation.
+    """
+    extended_rgb: Dict[str, int]
+    extended_name: str
+    legacy_rgb: Dict[str, int]
+    legacy_name: str
+
+    @staticmethod
+    def _rgb(red: int, green: int, blue: int) -> Dict[str, int]:
+        return {"red": red, "green": green, "blue": blue}
+
+    @classmethod
+    def for_otio_color(cls, otio_color) -> "_MarkerColor":
+        """Return the Avid marker color for an OTIO marker color, defaulting to red.
+
+        `otio_color` is the value of `marker.color`, which is a name string
+        in OTIO <= 0.18.1 but an `otio.core.Color` object starting with
+        https://github.com/AcademySoftwareFoundation/OpenTimelineIO/pull/2023
+
+        This code is compatible with both color formats.
+        """
+        rgb = cls._rgb
+
+        def legacy(name, r, g, b):
+            # a legacy color is identical in the legacy and extended encoding
+            return cls(rgb(r, g, b), name, rgb(r, g, b), name)
+
+        def extended(name, r, g, b, fallback):
+            # an extended-only color falls back to a legacy color when legacy
+            return cls(rgb(r, g, b), name, fallback.legacy_rgb, fallback.legacy_name)
+
+        red = legacy("Red", 41471, 12134, 6564)
+        green = legacy("Green", 13107, 52428, 13107)
+        blue = legacy("Blue", 13107, 13107, 52428)
+        magenta = legacy("Magenta", 52428, 13107, 52428)
+
+        color_map = {
+            "RED": red,
+            "GREEN": green,
+            "BLUE": blue,
+            "CYAN": legacy("Cyan", 13107, 52428, 52428),
+            "MAGENTA": magenta,
+            "YELLOW": legacy("Yellow", 58981, 58981, 6553),
+            "BLACK": legacy("Black", 0, 0, 0),
+            "WHITE": legacy("White", 65534, 65535, 65535),
+            "PINK": extended("Pink", 61184, 34304, 53504, fallback=magenta),
+            "PURPLE": extended("Purple", 23552, 16128, 62720, fallback=blue),
+            "ORANGE": extended("Orange", 62464, 33024, 12544, fallback=red),
+        }
+
+        if isinstance(otio_color, otio.core.Color):
+            # OTIO >0.18: marker.color is a Color object providing a name
+            name = otio_color.name or ""
+        else:
+            # OTIO<=0.18.1: marker.color is already a name string
+            name = otio_color or ""
+        return color_map.get(name.upper(), red)
+
+
+def _register_marker_extended_color(aaf_file):
+    """Register Avids `CommentMarkerColorExtended` property (no-op if present).
+
+    MC extended (16 color) marker property is not implemented in pyaaf2 yet (as of
+    v1.7.1), so we register the property ourselves. The values were extracted from
+    examples exported from Media Composer.
+    """
+    comment_marker = aaf_file.metadict.lookup_classdef("CommentMarker")
+    for propdef in comment_marker.all_propertydefs():
+        if propdef.name == "CommentMarkerColorExtended":
+            return
+    comment_marker.register_propertydef(
+        "CommentMarkerColorExtended",
+        "e96e6d45-c383-11d3-a069-006094eb75cb",
+        0xffda,
+        "e96e6d43-c383-11d3-a069-006094eb75cb",  # RGBColor record typedef
+        False,
+        False,
+    )
 
 
 def _is_considered_gap(thing):
@@ -113,6 +205,10 @@ class AAFFileTranscriber:
                 assigned that defines the Avid Frame Count Start / End.
         """
         self.aaf_file = aaf_file
+
+        # enable writing Avids extended marker colors
+        _register_marker_extended_color(self.aaf_file)
+
         self.embed_essence = embed_essence
         self.create_edgecode = create_edgecode
         self.compositionmob = self.aaf_file.create.CompositionMob()
@@ -416,6 +512,22 @@ class _TrackTranscriber:
         self.create_edgecode = create_edgecode
         self.timeline_mobslot, self.sequence = self._create_timeline_mobslot()
         self.timeline_mobslot.name = self.otio_track.name
+        self.timeline_mobslot[
+            'PhysicalTrackNumber'
+        ].value = self._aaf_physical_track_number
+
+    @property
+    def _aaf_physical_track_number(self) -> int:
+        """The 1-based index of this track among the tracks of the same kind.
+
+        Markers re-attach on read via (DescribedSlots[0], PhysicalTrackNumber), so
+        the marker EventMobSlot and the picture slot it annotates must share this.
+        """
+        same_kind = [
+            track for track in self.otio_track.parent()
+            if track.kind == self.otio_track.kind
+        ]
+        return same_kind.index(self.otio_track) + 1
 
     def transcribe(self, otio_child):
         """Transcribe otio child to corresponding AAF object"""
@@ -737,6 +849,147 @@ class _TrackTranscriber:
             sequence.components.append(result)
         sequence.length = length
         return sequence
+
+    def _transcribe_marker(self,
+                           otio_marker: otio.schema.Marker,
+                           otio_marker_parent: otio.core.Item
+                           ) -> aaf2.components.DescriptiveMarker:
+        marker_metadata = otio_marker.metadata.get("AAF", {})
+        prev_attrs = marker_metadata.get("CommentMarkerAttributeList", {})
+        prev_comments = marker_metadata.get("UserComments", {})
+
+        # NOTE: Avid misspelled the user property as "CommentMarkerUSer",
+        # which is the key the reader produces, so we keep that typo.
+        username = (
+            marker_metadata.get("CommentMarkerUSer")
+            or prev_attrs.get("_ATN_CRM_USER")
+            or getpass.getuser()
+        )
+
+        # grab marker color from OTIO marker object
+        marker_color = _MarkerColor.for_otio_color(otio_marker.color)
+
+        # MC reads the marker date from the Int32 unix timestamps below, NOT
+        # from the CommentMarkerTime / CommentMarkerDate strings. We set the strings
+        # anyway for legibility (and other tools may read them?). Preserve all of them
+        # on round-trip, falling back to "now" for new markers.
+        time_now = datetime.datetime.now()
+        create_date = int(
+            prev_attrs.get("_ATN_CRM_LONG_CREATE_DATE") or time_now.timestamp()
+        )
+        mod_date = int(prev_attrs.get("_ATN_CRM_LONG_MOD_DATE") or create_date)
+        date_str = (
+            marker_metadata.get("CommentMarkerDate")
+            or prev_attrs.get("_ATN_CRM_DATE")
+            or time_now.strftime("%m/%d/%Y")
+        )
+        time_str = (
+            marker_metadata.get("CommentMarkerTime")
+            or prev_attrs.get("_ATN_CRM_TIME")
+            or time_now.strftime("%H:%M")
+        )
+
+        range_in_track = otio_marker_parent.transformed_time_range(
+            otio_marker.marked_range, self.otio_track
+        )
+
+        aaf_marker = self.aaf_file.create.DescriptiveMarker()
+
+        # A marker in MC is a point event and seemingly does not care about Length.
+        # However, pyaaf2 (1.7.0) currently initializes the Length property to 0.
+        # The OTIO AAF reader reads that value to determine the marker length
+        # (defaults to 1), so we want to set the marker length anyway,
+        # to enable proper round trips.
+        aaf_marker['Length'].value = int(otio_marker.marked_range.duration.value)
+
+        # DescribedSlots points at the picture slot this marker annotates.
+        # Media Composer only reads the first entry, and the marker is re-attached
+        # on read via (DescribedSlots[0], EventMobSlot.PhysicalTrackNumber), so this
+        # must be the timeline slot id of the track being transcribed.
+        aaf_marker['DescribedSlots'].value = {int(self.timeline_mobslot.slot_id)}
+
+        aaf_marker['Position'].value = int(range_in_track.start_time.value)
+        aaf_marker['Comment'].value = otio_marker.name
+        aaf_marker['CommentMarkerUser'].value = username
+        aaf_marker['CommentMarkerColor'].value = marker_color.legacy_rgb
+        aaf_marker['CommentMarkerColorExtended'].value = marker_color.extended_rgb
+        aaf_marker['CommentMarkerTime'].value = time_str
+        aaf_marker['CommentMarkerDate'].value = date_str
+
+        # Mirror everything we can into the marker attribute list.
+        # MC displays some of these values only in the Marker window.
+        attr_list = aaf2.misc.TaggedValueHelper(
+            aaf_marker['CommentMarkerAttributeList']
+        )
+        attr_list["_ATN_CRM_COM"] = otio_marker.name
+        attr_list["_ATN_CRM_USER"] = username
+        attr_list["_ATN_CRM_DATE"] = date_str
+        attr_list["_ATN_CRM_TIME"] = time_str
+        attr_list["_ATN_CRM_COLOR"] = marker_color.legacy_name
+        attr_list["_ATN_CRM_COLOR_EXTENDED"] = marker_color.extended_name
+        attr_list["_ATN_CRM_MARKNAME"] = otio_marker.name
+        attr_list["_ATN_CRM_LONG_CREATE_DATE"] = create_date
+        attr_list["_ATN_CRM_LONG_MOD_DATE"] = mod_date
+
+        # UserComments mirror what Avid round-trips for the marker UI. DatabaseID /
+        # _ATN_CRM_ID is an MC internal IDs, we dont create them if they are not there.
+        database_id = prev_comments.get("DatabaseID") or prev_attrs.get("_ATN_CRM_ID")
+        if database_id:
+            attr_list["_ATN_CRM_ID"] = database_id
+        user_comments = aaf2.misc.TaggedValueHelper(aaf_marker['UserComments'])
+        user_comments["Comment"] = otio_marker.name
+        if database_id:
+            user_comments["DatabaseID"] = database_id
+
+        return aaf_marker
+
+    def transcribe_aaf_descriptive_markers(self):
+        """Transcribe all OTIO markers on the track onto one EventMobSlot which we
+        append to the composition mob.
+        """
+        # collect all OTIO marker parents on the track
+        otio_markers_parents = {}
+        for otio_marker in self.otio_track.markers:
+            otio_markers_parents[otio_marker] = self.otio_track
+
+        for track_child in self.otio_track.find_children():
+            child_markers = getattr(track_child, "markers", [])
+            for child_marker in child_markers:
+                otio_markers_parents[child_marker] = track_child
+
+        if not otio_markers_parents:
+            return
+
+        # Create a mob to hold the markers. MC needs one EventMobSlot per marked track,
+        # so we start with a high SlotID (1000+) that doesn't collide with the
+        # other slots on the composition mob.
+        event_mob_slot = self.aaf_file.create.EventMobSlot()
+        event_mob_slot['EditRate'].value = self.edit_rate
+
+        existing_slot_ids = {slot.slot_id for slot in self.compositionmob.slots}
+        event_slot_id = 1000
+        while event_slot_id in existing_slot_ids:
+            event_slot_id += 1
+        event_mob_slot['SlotID'].value = event_slot_id
+
+        # attaches the markers to the right track
+        event_mob_slot[
+            'PhysicalTrackNumber'
+        ].value = self._aaf_physical_track_number
+
+        # create a sequence with all markers for the track
+        sequence = self.aaf_file.create.Sequence("DescriptiveMetadata")
+        markers = [
+            self._transcribe_marker(otio_marker, marker_parent)
+            for otio_marker, marker_parent in otio_markers_parents.items()
+        ]
+
+        # Markers on an EventMobSlot should be sorted by increasing position.
+        for marker in sorted(markers, key=lambda m: m['Position'].value):
+            sequence.components.append(marker)
+
+        event_mob_slot.segment = sequence
+        self.compositionmob.slots.append(event_mob_slot)
 
     def aaf_operation_group(self, otio_stack):
         """
