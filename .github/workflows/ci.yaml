@@ -147,7 +147,7 @@ jobs:
         matrix.otio-version == env.GH_COV_OTIO &&
         matrix.os == env.GH_COV_OS &&
         github.actor != env.GH_DEPENDABOT
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v6
       with:
         flags: unittests
         name: otio-aaf-adapter-codecov
