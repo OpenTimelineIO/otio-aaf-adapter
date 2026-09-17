@@ -91,7 +91,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Download wheel
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: wheel
         path: dist/
@@ -158,13 +158,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download sdist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sdist
           path: dist
 
       - name: Download wheel
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wheel
           path: dist
