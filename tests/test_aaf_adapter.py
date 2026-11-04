@@ -124,6 +124,11 @@ MUTED_CLIP_PATH = os.path.join(
     SAMPLE_DATA_DIR,
     "test_muted_clip.aaf"
 )
+MUTED_WRAPPED_CLIP_PATHS = [
+    os.path.join(SAMPLE_DATA_DIR, "test_muted_master_effect.aaf"),
+    os.path.join(SAMPLE_DATA_DIR, "test_muted_subclip_no_effect.aaf"),
+    os.path.join(SAMPLE_DATA_DIR, "test_muted_group_no_effect.aaf"),
+]
 ESSENCE_GROUP_PATH = os.path.join(
     SAMPLE_DATA_DIR,
     "essence_group.aaf"
@@ -1022,6 +1027,20 @@ class AAFReaderTests(unittest.TestCase):
         self.assertIsInstance(clip, otio.schema.Clip)
         self.assertEqual(clip.name, 'Frame Debugger 0h.mov')
         self.assertEqual(clip.enabled, False)
+
+    def test_muted_wrapped_clip(self):
+        # A muted clip wrapped in an effect, a subclip or a group should be
+        # disabled itself, without disabling the track that contains it.
+        # Each file has three items on V2; the middle one is muted.
+        for path in MUTED_WRAPPED_CLIP_PATHS:
+            with self.subTest(path=os.path.basename(path)):
+                timeline = otio.adapters.read_from_file(path)
+                track = timeline.video_tracks()[1]
+                self.assertTrue(track.enabled)
+                self.assertEqual(
+                    [item.enabled for item in track],
+                    [True, False, True]
+                )
 
     def test_essence_group(self):
         timeline = otio.adapters.read_from_file(ESSENCE_GROUP_PATH)
