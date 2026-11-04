@@ -1668,8 +1668,12 @@ def _simplify(thing):
                 # Note: we don't merge effects, because we already made
                 # sure the child had no effects in the if statement above.
 
-                # Preserve the enabled/disabled state as we merge these two.
-                thing.enabled = thing.enabled and child.enabled
+                # Preserve the enabled/disabled state of the dissolved child
+                # by applying it to the items being pulled up, not to the
+                # parent (which would disable the whole track).
+                if not child.enabled:
+                    for moved in children_of_child:
+                        moved.enabled = False
 
                 c = c + num - 1
 
