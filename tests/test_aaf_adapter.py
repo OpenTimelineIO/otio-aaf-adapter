@@ -238,6 +238,10 @@ NESTED_AUDIO_DISSOLVE_PATH = os.path.join(
     SAMPLE_DATA_DIR,
     "nested_audio_dissolve.aaf"
 )
+COLORED_CLIPS_PATH = os.path.join(
+    SAMPLE_DATA_DIR,
+    "colored_clips.aaf"
+)
 
 
 try:
@@ -1365,17 +1369,17 @@ class AAFReaderTests(unittest.TestCase):
         fps = 24.0
         expected_markers = [
             {
-                'color': 'RED',
+                'color': otio.schema.MarkerColor.RED,
                 'label': 'm1',
                 'start_time': otio.opentime.from_frames(50.0, fps)
             },
             {
-                'color': 'GREEN',
+                'color': otio.schema.MarkerColor.GREEN,
                 'label': 'm2',
                 'start_time': otio.opentime.from_frames(103.0, fps)
             },
             {
-                'color': 'BLUE',
+                'color': otio.schema.MarkerColor.BLUE,
                 'label': 'm3',
                 'start_time': otio.opentime.from_frames(166.0, fps)
             }
@@ -1857,6 +1861,28 @@ class AAFReaderTests(unittest.TestCase):
         self.assertEqual([t.kind for t in timeline.tracks],
                          ["Video", "AAF_DataEssenceTrack"]
                          )
+
+    def test_clip_color(self):
+        """Test if clip color translates correctly from AAF SourceClip"""
+        timeline = otio.adapters.read_from_file(COLORED_CLIPS_PATH)
+        clips = list(timeline.find_clips())
+
+        def rgba(c):
+            return (c.r, c.g, c.b, c.a)
+
+        # named colors should round-trip with their name intact
+        self.assertEqual(clips[0].color.name, "Red")
+        self.assertEqual(rgba(clips[0].color), rgba(otio.core.Color.RED))
+        self.assertEqual(clips[1].color.name, "Green")
+        self.assertEqual(rgba(clips[1].color), rgba(otio.core.Color.GREEN))
+        self.assertEqual(clips[2].color.name, "Blue")
+        self.assertEqual(rgba(clips[2].color), rgba(otio.core.Color.BLUE))
+        self.assertEqual(clips[3].color.name, "White")
+        self.assertEqual(rgba(clips[3].color), rgba(otio.core.Color.WHITE))
+        # custom color has no named match — compare by float values from source
+        custom_color_values = [6553, 13107, 19660, 65535]
+        self.assertEqual(rgba(clips[4].color),
+                         rgba(otio.core.Color.from_int_list(custom_color_values, 16)))
 
 
 @contextlib.contextmanager
@@ -2531,7 +2557,7 @@ class AAFWriterTests(unittest.TestCase):
                     otio.plugins.plugin_info_map()["hooks"]
                 )
 
-    def test_transcribe_hook_args_map(self):
+    def test_transcribe_write_hook_args_map(self):
         """Tests if extra arguments are correctly passed to the hooks.
         """
 
@@ -2556,6 +2582,26 @@ class AAFWriterTests(unittest.TestCase):
                         filepath=tmp_aaf_path,
                         embed_essence=True,
                         use_empty_mob_ids=True,
+                        hook_function_argument_map={
+                            "test_post_hook_raise": True
+                        }
+                    )
+
+    def test_transcribe_read_hook_args_map(self):
+        """Tests if extra arguments are correctly passed to the read hooks."""
+        if otio.adapters.from_name("AAF").has_feature("hooks"):
+            with with_hooks_plugin_environment():
+                with self.assertRaises(AAFAdapterError):
+                    otio.adapters.read_from_file(
+                        SIMPLE_EXAMPLE_PATH,
+                        hook_function_argument_map={
+                            "test_pre_hook_raise": True
+                        }
+                    )
+
+                with self.assertRaises(AAFAdapterError):
+                    otio.adapters.read_from_file(
+                        SIMPLE_EXAMPLE_PATH,
                         hook_function_argument_map={
                             "test_post_hook_raise": True
                         }
@@ -2773,6 +2819,101 @@ class AAFWriterTests(unittest.TestCase):
             self.assertIsNotNone(aaf_clip)
             self.assertEqual(aaf_clip.source_range, ref_clip.source_range)
 
+    def test_aaf_writer_clip_color(self):
+        """Checks if the color on the clip gets correctly translated in the AAF file."""
+
+        clip_range = otio.opentime.TimeRange(
+            start_time=otio.opentime.RationalTime(
+                value=0,
+                rate=24.0
+            ),
+            duration=otio.opentime.RationalTime(
+                value=24,
+                rate=24.0
+            )
+        )
+        media_reference = otio.schema.MissingReference(
+            available_range=clip_range
+        )
+
+        red_clip = otio.schema.Clip(
+            name="Red Clip",
+            source_range=clip_range,
+            media_reference=media_reference
+        )
+        red_clip.color = otio.core.Color.RED
+
+        green_clip = otio.schema.Clip(
+            name="Green Clip",
+            source_range=clip_range,
+            media_reference=media_reference
+        )
+        green_clip.color = otio.core.Color.GREEN
+
+        blue_clip = otio.schema.Clip(
+            name="Blue Clip",
+            source_range=clip_range,
+            media_reference=media_reference
+        )
+        blue_clip.color = otio.core.Color.BLUE
+
+        white_clip = otio.schema.Clip(
+            name="White Clip",
+            source_range=clip_range,
+            media_reference=media_reference
+        )
+        white_clip.color = otio.core.Color.WHITE
+
+        custom_clip = otio.schema.Clip(
+            name="Custom Clip Color",
+            source_range=clip_range,
+            media_reference=media_reference
+        )
+        custom_color_values = [6553, 13107, 19660, 65535]
+        custom_clip.color = otio.core.Color.from_int_list(custom_color_values, 16)
+
+        clip_list = [red_clip, green_clip, blue_clip, white_clip, custom_clip]
+        expected_color_values = [
+            clip.color.to_rgba_int_list(16) for clip in clip_list
+        ]
+        expected_attr_values = [
+            {
+                "_COLOR_R": val[0],
+                "_COLOR_G": val[1],
+                "_COLOR_B": val[2],
+            } for val in expected_color_values
+        ]
+
+        tl = otio.schema.Timeline(
+            tracks=[
+                otio.schema.Track(children=clip_list,
+                                  kind=otio.schema.TrackKind.Video)
+            ]
+        )
+
+        _, tmp_aaf_path = tempfile.mkstemp(prefix="clip_color_", suffix='.aaf')
+
+        otio.adapters.write_to_file(
+            tl,
+            filepath=tmp_aaf_path,
+            use_empty_mob_ids=True
+        )
+
+        # check of the colors are matching on the source clips
+        with aaf2.open(tmp_aaf_path) as aaf_file:
+            comp_mob = next(aaf_file.content.compositionmobs())
+            sequence = comp_mob.slots[0].segment
+            for i, source_clip in enumerate(sequence.components):
+                attr_list = source_clip["ComponentAttributeList"]
+                self.assertEqual(len(attr_list), 3)
+
+                helper = aaf2.misc.TaggedValueHelper(
+                    attr_list
+                )
+
+                for key, val in expected_attr_values[i].items():
+                    self.assertEqual(helper[key], val)
+
     def test_aaf_writer_marker_roundtrip(self):
         """Markers survive write -> read AAF round-trip.
         """
@@ -2873,6 +3014,140 @@ class AAFWriterTests(unittest.TestCase):
                     attrs["_ATN_CRM_COLOR"], legacy_fallback[extended_name]
                 )
                 self.assertIsNotNone(marker["CommentMarkerColorExtended"].value)
+
+    def _missing_reference_clip(self, tape_name="TAPE_A001", tape_range=True,
+                                tape_mob_id=None):
+        """Builds a clip shaped like the AAF reader's output for a clip with a
+        physical (tape) source: an active ExternalReference plus an inactive
+        MissingReference carrying the tape mob's identity.
+        """
+        rate = 24
+        media_range = otio.opentime.TimeRange(
+            otio.opentime.RationalTime(0, rate),
+            otio.opentime.RationalTime(100, rate),
+        )
+        clip = otio.schema.Clip(
+            name="clip_A001",
+            source_range=media_range,
+            media_reference=otio.schema.ExternalReference(
+                target_url="file:///media/clip_A001.mxf",
+                available_range=media_range,
+            ),
+        )
+        missing_ref = otio.schema.MissingReference(name=tape_name)
+        if tape_range:
+            # 01:00:00:00 @ 24fps, distinct from the ExternalReference range.
+            missing_ref.available_range = otio.opentime.TimeRange(
+                otio.opentime.RationalTime(86400, rate),
+                otio.opentime.RationalTime(2400, rate),
+            )
+        if tape_mob_id is not None:
+            missing_ref.metadata["AAF"] = {"MobID": str(tape_mob_id)}
+
+        refs = clip.media_references()
+        refs[tape_name or "tape"] = missing_ref
+        clip.set_media_references(refs, clip.active_media_reference_key)
+        return clip
+
+    def _write_and_get_tape_mob(self, clip):
+        tl = otio.schema.Timeline(tracks=[
+            otio.schema.Track(children=[clip], kind=otio.schema.TrackKind.Video)
+        ])
+        fd, tmp_aaf_path = tempfile.mkstemp(prefix="missing_ref_", suffix=".aaf")
+        os.close(fd)
+        self.addCleanup(os.remove, tmp_aaf_path)
+        otio.adapters.write_to_file(tl, tmp_aaf_path, use_empty_mob_ids=True)
+
+        with aaf2.open(tmp_aaf_path) as aaf_file:
+            tape_mobs = [
+                mob for mob in aaf_file.content.sourcemobs()
+                if isinstance(mob.descriptor, aaf2.essence.TapeDescriptor)
+            ]
+            self.assertEqual(len(tape_mobs), 1)
+            tape_mob = tape_mobs[0]
+            timecode = next(
+                slot.segment for slot in tape_mob.slots
+                if isinstance(slot.segment, aaf2.components.Timecode)
+            )
+            locators = list(tape_mob.descriptor["Locator"].value or [])
+            info = {
+                "name": tape_mob.name,
+                "mob_id": str(tape_mob.mob_id),
+                "tc_start": timecode.start,
+                "tc_length": timecode.length,
+                "locators": len(locators),
+            }
+        return tmp_aaf_path, info
+
+    def test_aaf_writer_missing_reference_tape_mob(self):
+        """The tape mob is rebuilt from the clip's inactive MissingReference,
+        keeping its name, MobID and timecode range, and the MissingReference
+        survives a re-read.
+        """
+        tape_mob_id = aaf2.mobid.MobID.new()
+        clip = self._missing_reference_clip(tape_mob_id=tape_mob_id)
+        aaf_path, tape = self._write_and_get_tape_mob(clip)
+
+        self.assertEqual(tape["name"], "TAPE_A001")
+        self.assertEqual(tape["mob_id"], str(tape_mob_id))
+        self.assertEqual(tape["tc_start"], 86400)
+        self.assertEqual(tape["tc_length"], 2400)
+        # The ExternalReference's URL belongs to the file mob, not the tape.
+        self.assertEqual(tape["locators"], 0)
+
+        result_clips = list(otio.adapters.read_from_file(aaf_path).find_clips())
+        self.assertEqual(len(result_clips), 1)
+        result_clip = result_clips[0]
+        missing_refs = [
+            ref for key, ref in result_clip.media_references().items()
+            if key != result_clip.active_media_reference_key
+            and isinstance(ref, otio.schema.MissingReference)
+        ]
+        self.assertEqual(len(missing_refs), 1)
+        self.assertEqual(missing_refs[0].name, "TAPE_A001")
+        self.assertEqual(
+            missing_refs[0].metadata["AAF"]["MobID"], str(tape_mob_id)
+        )
+
+    def test_aaf_writer_missing_reference_without_name(self):
+        """An unnamed MissingReference falls back to the clip name."""
+        clip = self._missing_reference_clip(tape_name="")
+        _, tape = self._write_and_get_tape_mob(clip)
+        self.assertEqual(tape["name"], "clip_A001")
+        self.assertEqual(tape["tc_start"], 86400)
+
+    def test_aaf_writer_missing_reference_without_range(self):
+        """A MissingReference without an available range falls back to the
+        active media reference's range.
+        """
+        clip = self._missing_reference_clip(tape_range=False)
+        _, tape = self._write_and_get_tape_mob(clip)
+        self.assertEqual(tape["name"], "TAPE_A001")
+        self.assertEqual(tape["tc_start"], 0)
+        self.assertEqual(tape["tc_length"], 100)
+
+    def test_aaf_writer_without_missing_reference(self):
+        """Without a MissingReference the tape mob uses the clip's name and
+        media range, and carries the ExternalReference URL as before.
+        """
+        rate = 24
+        media_range = otio.opentime.TimeRange(
+            otio.opentime.RationalTime(0, rate),
+            otio.opentime.RationalTime(100, rate),
+        )
+        clip = otio.schema.Clip(
+            name="clip_A001",
+            source_range=media_range,
+            media_reference=otio.schema.ExternalReference(
+                target_url="file:///media/clip_A001.mxf",
+                available_range=media_range,
+            ),
+        )
+        _, tape = self._write_and_get_tape_mob(clip)
+        self.assertEqual(tape["name"], "clip_A001")
+        self.assertEqual(tape["tc_start"], 0)
+        self.assertEqual(tape["tc_length"], 100)
+        self.assertEqual(tape["locators"], 1)
 
 
 class SimplifyTests(unittest.TestCase):

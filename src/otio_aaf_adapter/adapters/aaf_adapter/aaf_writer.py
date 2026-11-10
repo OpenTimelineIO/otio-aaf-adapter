@@ -48,7 +48,7 @@ def _physical_mob_reference(otio_clip):
     The AAF reader maps a locator-less physical source mob to a
     MissingReference. When this is not the primary reference it carries
     the original tape mob's identity (name, MobID, available range)
-    in its metadata, which is needed to	reconstruct the physical mob
+    in its metadata, which is needed to reconstruct the physical mob
     on write and for the resulting AAF to behave identically in the
     Avid as one produced natively.
     """
@@ -76,6 +76,7 @@ def _physical_mob_id(tape_ref):
         return aaf2.mobid.MobID(str(mob_id))
     except Exception:
         return None
+
 
 class _MarkerColor(NamedTuple):
     """An OTIO marker color translated to both of Avids marker color systems.
@@ -285,7 +286,7 @@ class AAFFileTranscriber:
         mob_id = self._clip_mob_ids_map.get(otio_clip)
         tapemob = self._unique_tapemobs.get(mob_id)
         if not tapemob:
-            # Preserve physical mobs (Avid MissingReferences) 
+            # Preserve physical mobs (Avid MissingReferences)
             # pull the tape mob's identity (name, MobID, available range) from the
             # MissingReference instead of the active reference on the clip
             # The goal is to preserve the timeline's functionality when
@@ -294,10 +295,9 @@ class AAFFileTranscriber:
             # behavior.
             tape_ref = _physical_mob_reference(otio_clip)
 
-            if tape_ref is None:
-                tape_name = otio_clip.name
-                tape_range = otio_clip.media_reference.available_range
-            else:
+            tape_name = otio_clip.name
+            tape_range = otio_clip.media_reference.available_range
+            if tape_ref is not None:
                 tape_name = tape_ref.name or tape_name
                 if tape_ref.available_range is not None:
                     tape_range = tape_ref.available_range
@@ -794,6 +794,16 @@ class _TrackTranscriber:
         compmob_clip.mob = mastermob
         compmob_clip.slot = mastermob_slot
         compmob_clip.slot_id = mastermob_slot.slot_id
+
+        # convert OTIO color to uint 16bit and store in source clip attributes
+        if otio_clip.color is not None:
+            red_val, green_val, blue_val, _ = otio_clip.color.to_rgba_int_list(16)
+            mob_attr_list = aaf2.misc.TaggedValueHelper(
+                compmob_clip['ComponentAttributeList']
+            )
+            mob_attr_list["_COLOR_R"] = red_val
+            mob_attr_list["_COLOR_G"] = green_val
+            mob_attr_list["_COLOR_B"] = blue_val
 
         # create edgecode for Avid Frame Count properties
         if self.create_edgecode:
