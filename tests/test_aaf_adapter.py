@@ -3015,6 +3015,140 @@ class AAFWriterTests(unittest.TestCase):
                 )
                 self.assertIsNotNone(marker["CommentMarkerColorExtended"].value)
 
+    def _missing_reference_clip(self, tape_name="TAPE_A001", tape_range=True,
+                                tape_mob_id=None):
+        """Builds a clip shaped like the AAF reader's output for a clip with a
+        physical (tape) source: an active ExternalReference plus an inactive
+        MissingReference carrying the tape mob's identity.
+        """
+        rate = 24
+        media_range = otio.opentime.TimeRange(
+            otio.opentime.RationalTime(0, rate),
+            otio.opentime.RationalTime(100, rate),
+        )
+        clip = otio.schema.Clip(
+            name="clip_A001",
+            source_range=media_range,
+            media_reference=otio.schema.ExternalReference(
+                target_url="file:///media/clip_A001.mxf",
+                available_range=media_range,
+            ),
+        )
+        missing_ref = otio.schema.MissingReference(name=tape_name)
+        if tape_range:
+            # 01:00:00:00 @ 24fps, distinct from the ExternalReference range.
+            missing_ref.available_range = otio.opentime.TimeRange(
+                otio.opentime.RationalTime(86400, rate),
+                otio.opentime.RationalTime(2400, rate),
+            )
+        if tape_mob_id is not None:
+            missing_ref.metadata["AAF"] = {"MobID": str(tape_mob_id)}
+
+        refs = clip.media_references()
+        refs[tape_name or "tape"] = missing_ref
+        clip.set_media_references(refs, clip.active_media_reference_key)
+        return clip
+
+    def _write_and_get_tape_mob(self, clip):
+        tl = otio.schema.Timeline(tracks=[
+            otio.schema.Track(children=[clip], kind=otio.schema.TrackKind.Video)
+        ])
+        fd, tmp_aaf_path = tempfile.mkstemp(prefix="missing_ref_", suffix=".aaf")
+        os.close(fd)
+        self.addCleanup(os.remove, tmp_aaf_path)
+        otio.adapters.write_to_file(tl, tmp_aaf_path, use_empty_mob_ids=True)
+
+        with aaf2.open(tmp_aaf_path) as aaf_file:
+            tape_mobs = [
+                mob for mob in aaf_file.content.sourcemobs()
+                if isinstance(mob.descriptor, aaf2.essence.TapeDescriptor)
+            ]
+            self.assertEqual(len(tape_mobs), 1)
+            tape_mob = tape_mobs[0]
+            timecode = next(
+                slot.segment for slot in tape_mob.slots
+                if isinstance(slot.segment, aaf2.components.Timecode)
+            )
+            locators = list(tape_mob.descriptor["Locator"].value or [])
+            info = {
+                "name": tape_mob.name,
+                "mob_id": str(tape_mob.mob_id),
+                "tc_start": timecode.start,
+                "tc_length": timecode.length,
+                "locators": len(locators),
+            }
+        return tmp_aaf_path, info
+
+    def test_aaf_writer_missing_reference_tape_mob(self):
+        """The tape mob is rebuilt from the clip's inactive MissingReference,
+        keeping its name, MobID and timecode range, and the MissingReference
+        survives a re-read.
+        """
+        tape_mob_id = aaf2.mobid.MobID.new()
+        clip = self._missing_reference_clip(tape_mob_id=tape_mob_id)
+        aaf_path, tape = self._write_and_get_tape_mob(clip)
+
+        self.assertEqual(tape["name"], "TAPE_A001")
+        self.assertEqual(tape["mob_id"], str(tape_mob_id))
+        self.assertEqual(tape["tc_start"], 86400)
+        self.assertEqual(tape["tc_length"], 2400)
+        # The ExternalReference's URL belongs to the file mob, not the tape.
+        self.assertEqual(tape["locators"], 0)
+
+        result_clips = list(otio.adapters.read_from_file(aaf_path).find_clips())
+        self.assertEqual(len(result_clips), 1)
+        result_clip = result_clips[0]
+        missing_refs = [
+            ref for key, ref in result_clip.media_references().items()
+            if key != result_clip.active_media_reference_key
+            and isinstance(ref, otio.schema.MissingReference)
+        ]
+        self.assertEqual(len(missing_refs), 1)
+        self.assertEqual(missing_refs[0].name, "TAPE_A001")
+        self.assertEqual(
+            missing_refs[0].metadata["AAF"]["MobID"], str(tape_mob_id)
+        )
+
+    def test_aaf_writer_missing_reference_without_name(self):
+        """An unnamed MissingReference falls back to the clip name."""
+        clip = self._missing_reference_clip(tape_name="")
+        _, tape = self._write_and_get_tape_mob(clip)
+        self.assertEqual(tape["name"], "clip_A001")
+        self.assertEqual(tape["tc_start"], 86400)
+
+    def test_aaf_writer_missing_reference_without_range(self):
+        """A MissingReference without an available range falls back to the
+        active media reference's range.
+        """
+        clip = self._missing_reference_clip(tape_range=False)
+        _, tape = self._write_and_get_tape_mob(clip)
+        self.assertEqual(tape["name"], "TAPE_A001")
+        self.assertEqual(tape["tc_start"], 0)
+        self.assertEqual(tape["tc_length"], 100)
+
+    def test_aaf_writer_without_missing_reference(self):
+        """Without a MissingReference the tape mob uses the clip's name and
+        media range, and carries the ExternalReference URL as before.
+        """
+        rate = 24
+        media_range = otio.opentime.TimeRange(
+            otio.opentime.RationalTime(0, rate),
+            otio.opentime.RationalTime(100, rate),
+        )
+        clip = otio.schema.Clip(
+            name="clip_A001",
+            source_range=media_range,
+            media_reference=otio.schema.ExternalReference(
+                target_url="file:///media/clip_A001.mxf",
+                available_range=media_range,
+            ),
+        )
+        _, tape = self._write_and_get_tape_mob(clip)
+        self.assertEqual(tape["name"], "clip_A001")
+        self.assertEqual(tape["tc_start"], 0)
+        self.assertEqual(tape["tc_length"], 100)
+        self.assertEqual(tape["locators"], 1)
+
 
 class SimplifyTests(unittest.TestCase):
     def test_aaf_simplify(self):
