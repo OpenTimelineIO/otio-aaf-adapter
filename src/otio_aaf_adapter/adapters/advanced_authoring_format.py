@@ -1586,6 +1586,18 @@ def _trim_markers(thing):
     return thing
 
 
+def _linear_time_scalar(thing):
+    """The combined time_scalar of thing's linear time effects (including
+    freeze frames), or None if it has none."""
+    time_scalar = None
+    for effect in thing.effects:
+        if isinstance(effect, otio.schema.LinearTimeWarp):
+            if time_scalar is None:
+                time_scalar = 1.0
+            time_scalar *= effect.time_scalar
+    return time_scalar
+
+
 def _fix_time_effect_duration(thing, source_range):
     if not source_range:
         return thing
@@ -1712,9 +1724,22 @@ def _simplify(thing):
             # trim stack tracks if stack has a source_range set and
             # only if stack tracks don't contain transitions
             if thing.source_range and not _has_transitions(thing):
+                trim_range = thing.source_range
+                time_scalar = _linear_time_scalar(thing)
+                if time_scalar is not None:
+                    # The Stack's range is in the time effect's output time,
+                    # but its tracks are in the effect's input time, so map
+                    # the start across (a freeze frame maps every frame to
+                    # its first one). The start is non-zero when a
+                    # transition into the Stack needs a handle.
+                    start = trim_range.start_time
+                    trim_range = otio.opentime.TimeRange(
+                        start_time=otio.opentime.RationalTime(
+                            start.value * time_scalar, start.rate),
+                        duration=trim_range.duration)
                 for track_num, child_track in enumerate(thing):
                     thing[track_num] = otio.algorithms.track_trimmed_to_range(
-                        child_track, thing.source_range)
+                        child_track, trim_range)
                     for child in thing[track_num]:
                         _trim_markers(child)
 
