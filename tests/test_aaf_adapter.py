@@ -242,6 +242,22 @@ COLORED_CLIPS_PATH = os.path.join(
     SAMPLE_DATA_DIR,
     "colored_clips.aaf"
 )
+FREEZE_FRAMES_AND_DISSOLVES_PATH = os.path.join(
+    SAMPLE_DATA_DIR,
+    "test_freeze_frames_and_dissolves.aaf"
+)
+SPEED_EFFECTS_DISSOLVES_PATH = os.path.join(
+    SAMPLE_DATA_DIR,
+    "test_speed_effects_dissolves.aaf"
+)
+FRACTIONAL_DISSOLVES_PATH = os.path.join(
+    SAMPLE_DATA_DIR,
+    "test_fractional_dissolves.aaf"
+)
+MORE_FRACTIONAL_DISSOLVES_PATH = os.path.join(
+    SAMPLE_DATA_DIR,
+    "test_more_fractional_dissolves.aaf"
+)
 
 
 try:
@@ -1011,6 +1027,77 @@ class AAFReaderTests(unittest.TestCase):
         self.assertEqual(16, clip.duration().value)
         # TODO: We don't yet support non-linear time warps, but when we
         # do then this effect is a "Speed Bump" from 166% to 44% to 166%
+
+    def test_freeze_frames_and_dissolves(self):
+        # Six 10-second freeze frames between plain clips, with cuts and
+        # dissolves. A dissolve centered on or ending at the cut into a freeze
+        # needs a handle from the freeze itself, so the freeze's range starts
+        # later than frame 0. Each freeze should still hold its frame.
+        timeline = otio.adapters.read_from_file(
+            FREEZE_FRAMES_AND_DISSOLVES_PATH
+        )
+        track = timeline.video_tracks()[0]
+        freezes = [
+            item for item in track
+            if isinstance(item, otio.core.Item) and any(
+                isinstance(effect, otio.schema.FreezeFrame)
+                for effect in item.effects
+            )
+        ]
+        self.assertEqual(len(freezes), 6)
+        for freeze in freezes:
+            self.assertIsInstance(freeze, otio.schema.Clip)
+            self.assertEqual(freeze.duration().value, 240)
+
+    def test_speed_effects_dissolves(self):
+        # Eight 10-second speed changes (four at 50%, four at 200%) between
+        # plain clips, with cuts and dissolves, each cut to start on the same
+        # source frame. A dissolve centered on or ending at the cut into a
+        # speed change needs a handle from it, so its range starts later
+        # than frame 0; the source frame where it starts should not change.
+        timeline = otio.adapters.read_from_file(SPEED_EFFECTS_DISSOLVES_PATH)
+        track = timeline.video_tracks()[0]
+        speed_changes = [
+            item for item in track
+            if isinstance(item, otio.core.Item) and any(
+                isinstance(effect, otio.schema.LinearTimeWarp)
+                for effect in item.effects
+            )
+        ]
+        self.assertEqual(len(speed_changes), 8)
+        start = speed_changes[0].source_range.start_time
+        for clip in speed_changes:
+            self.assertIsInstance(clip, otio.schema.Clip)
+            self.assertEqual(clip.source_range.start_time, start)
+            self.assertEqual(clip.duration().value, 240)
+
+    def test_fractional_dissolves(self):
+        # Two files of four 10-second clips, each cut to start on the same
+        # source frame, with dissolves into them: 7 frames starting at the
+        # cut, 13 ending at it, 9 split 5/4, and 92 ending at the cut. In the
+        # first file all four clips are at 50%; in the second they're at 33%,
+        # 66%, 75% and 109%. Most of these handles are a fractional number of
+        # source frames (13 at 66% is 8.58), so Avid starts the clip's offset
+        # map at a fraction to keep the cut on a whole frame. Every clip should
+        # still start on the source frame it was cut on.
+        for path in (FRACTIONAL_DISSOLVES_PATH, MORE_FRACTIONAL_DISSOLVES_PATH):
+            with self.subTest(path=os.path.basename(path)):
+                timeline = otio.adapters.read_from_file(path)
+                track = timeline.video_tracks()[0]
+                speed_changes = [
+                    item for item in track
+                    if isinstance(item, otio.core.Item) and any(
+                        isinstance(effect, otio.schema.LinearTimeWarp)
+                        for effect in item.effects
+                    )
+                ]
+                self.assertEqual(len(speed_changes), 4)
+                start = speed_changes[0].source_range.start_time.value
+                self.assertEqual(start % 1, 0)
+                for clip in speed_changes:
+                    self.assertIsInstance(clip, otio.schema.Clip)
+                    self.assertEqual(clip.source_range.start_time.value, start)
+                    self.assertEqual(clip.duration().value, 240)
 
     def test_muted_clip(self):
         timeline = otio.adapters.read_from_file(MUTED_CLIP_PATH)

@@ -8,6 +8,7 @@ Depending on if/where PyAAF is installed, you may need to set this env var:
 """
 import colorsys
 import copy
+import math
 import numbers
 import os
 import sys
@@ -1586,6 +1587,38 @@ def _trim_markers(thing):
     return thing
 
 
+def _linear_time_scalar(thing):
+    """The combined time_scalar of thing's linear time effects (including
+    freeze frames), or None if it has none."""
+    time_scalar = None
+    for effect in thing.effects:
+        if isinstance(effect, otio.schema.LinearTimeWarp):
+            if time_scalar is None:
+                time_scalar = 1.0
+            time_scalar *= effect.time_scalar
+    return time_scalar
+
+
+def _offset_map_start(thing):
+    """The value at time 0 of the Avid offset map (PARAM_SPEED_OFFSET_MAP_U)
+    kept in the metadata of thing's linear time effect, or None. When a
+    transition's handle comes to a fractional number of input frames, Avid
+    starts the map there (e.g. at 0.5) so the cut still falls on a whole
+    input frame."""
+    for effect in thing.effects:
+        if not isinstance(effect, otio.schema.LinearTimeWarp):
+            continue
+        offset_map = effect.metadata.get("AAF", {}).get(
+            "Parameters", {}).get("PARAM_SPEED_OFFSET_MAP_U", {})
+        try:
+            for time, value in offset_map["keyframe_values"]:
+                if float(time) == 0:
+                    return float(value)
+        except (KeyError, TypeError, ValueError):
+            pass
+    return None
+
+
 def _fix_time_effect_duration(thing, source_range):
     if not source_range:
         return thing
@@ -1712,9 +1745,29 @@ def _simplify(thing):
             # trim stack tracks if stack has a source_range set and
             # only if stack tracks don't contain transitions
             if thing.source_range and not _has_transitions(thing):
+                trim_range = thing.source_range
+                time_scalar = _linear_time_scalar(thing)
+                if time_scalar is not None:
+                    # The Stack's range is in the time effect's output time,
+                    # but its tracks are in the effect's input time, so map
+                    # the start across (a freeze frame maps every frame to
+                    # its first one). The start is non-zero when a
+                    # transition into the Stack needs a handle.
+                    start = trim_range.start_time
+                    input_start = start.value * time_scalar
+                    offset_start = _offset_map_start(thing)
+                    if offset_start is not None and time_scalar >= 0:
+                        # Avid's own offset map says where the input starts:
+                        # take the whole input frame shown at the cut
+                        input_start = math.floor(
+                            round(offset_start + input_start, 6))
+                    trim_range = otio.opentime.TimeRange(
+                        start_time=otio.opentime.RationalTime(
+                            input_start, start.rate),
+                        duration=trim_range.duration)
                 for track_num, child_track in enumerate(thing):
                     thing[track_num] = otio.algorithms.track_trimmed_to_range(
-                        child_track, thing.source_range)
+                        child_track, trim_range)
                     for child in thing[track_num]:
                         _trim_markers(child)
 
