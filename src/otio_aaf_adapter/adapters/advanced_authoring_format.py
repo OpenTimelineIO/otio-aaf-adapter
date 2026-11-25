@@ -8,6 +8,7 @@ Depending on if/where PyAAF is installed, you may need to set this env var:
 """
 import colorsys
 import copy
+import math
 import numbers
 import os
 import sys
@@ -1598,6 +1599,26 @@ def _linear_time_scalar(thing):
     return time_scalar
 
 
+def _offset_map_start(thing):
+    """The value at time 0 of the Avid offset map (PARAM_SPEED_OFFSET_MAP_U)
+    kept in the metadata of thing's linear time effect, or None. When a
+    transition's handle comes to a fractional number of input frames, Avid
+    starts the map there (e.g. at 0.5) so the cut still falls on a whole
+    input frame."""
+    for effect in thing.effects:
+        if not isinstance(effect, otio.schema.LinearTimeWarp):
+            continue
+        offset_map = effect.metadata.get("AAF", {}).get(
+            "Parameters", {}).get("PARAM_SPEED_OFFSET_MAP_U", {})
+        try:
+            for time, value in offset_map["keyframe_values"]:
+                if float(time) == 0:
+                    return float(value)
+        except (KeyError, TypeError, ValueError):
+            pass
+    return None
+
+
 def _fix_time_effect_duration(thing, source_range):
     if not source_range:
         return thing
@@ -1733,9 +1754,16 @@ def _simplify(thing):
                     # its first one). The start is non-zero when a
                     # transition into the Stack needs a handle.
                     start = trim_range.start_time
+                    input_start = start.value * time_scalar
+                    offset_start = _offset_map_start(thing)
+                    if offset_start is not None and time_scalar >= 0:
+                        # Avid's own offset map says where the input starts:
+                        # take the whole input frame shown at the cut
+                        input_start = math.floor(
+                            round(offset_start + input_start, 6))
                     trim_range = otio.opentime.TimeRange(
                         start_time=otio.opentime.RationalTime(
-                            start.value * time_scalar, start.rate),
+                            input_start, start.rate),
                         duration=trim_range.duration)
                 for track_num, child_track in enumerate(thing):
                     thing[track_num] = otio.algorithms.track_trimmed_to_range(
